@@ -29,3 +29,12 @@ test('hosted learner photos are supported by PDF asset hydration',()=>{
  assert.match(pdf,/hydrateHostedReportImages/);
  assert.match(pdf,/passport_photo_url/);
 });
+
+test('merit assessment options use the selected period and group standard exams by type',()=>{
+ const centre=fs.readFileSync(path.join(__dirname,'../public/js/results-centre.js'),'utf8');
+ assert.match(centre,/function meritAssessmentOptions\(scope\)/);
+ assert.match(centre,/return option\(type, MERIT_ASSESSMENT_LABELS\[type\], scope\.assessment\)/);
+ assert.match(centre,/function applyMeritAssessment\(params, assessment\)/);
+ assert.match(centre,/params\.assessment_type = selected/);
+ assert.match(centre,/loadOptions\(\{ academic_year_id: yearId, term_id: termId \}\)\.then\(loadCommand\)/);
+});

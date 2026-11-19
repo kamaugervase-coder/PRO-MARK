@@ -1232,11 +1232,17 @@ async function buildMerit(schoolId, query = {}, options = {}) {
     diagnostics = await diagnoseEmpty(schoolId, year.id, term.id, selectedClass, assessmentId, assessmentType);
   }
 
+  const assessmentTypeLabels = {
+    CAT: 'All CATs',
+    OPENER: 'Opener',
+    MID_TERM: 'Mid Term',
+    END_TERM: 'End Term'
+  };
   const assessmentLabel = assessmentId
     ? (assessments.find(a => String(a.id) === String(assessmentId))?.name || 'Selected assessment')
-    : assessmentType === 'CAT' ? 'All CATs'
-      : assessmentType ? assessmentType.replace(/_/g, ' ')
-        : 'All assessments (term score)';
+    : assessmentType
+      ? assessmentTypeLabels[assessmentType] || assessmentType.replace(/_/g, ' ')
+      : 'All assessments (term score)';
 
   return {
     context: {

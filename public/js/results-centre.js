@@ -29,11 +29,39 @@
   };
 
   var TYPE_LABEL = { '': 'All assessments', OPENER: 'Opener', MID_TERM: 'Mid Term', CAT: 'CATs', END_TERM: 'End Term' };
+  var MERIT_ASSESSMENT_LABELS = { OPENER: 'Opener', MID_TERM: 'Mid Term', END_TERM: 'End Term' };
 
   function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
     });
+  }
+
+  function meritAssessmentOptions(scope) {
+    var assessments = state.options.assessments || [];
+    var standardTypes = Object.keys(MERIT_ASSESSMENT_LABELS).filter(function (type) {
+      return assessments.some(function (assessment) {
+        return String(assessment.type || '').trim().toUpperCase() === type;
+      });
+    });
+    var standardOptions = standardTypes.map(function (type) {
+      return option(type, MERIT_ASSESSMENT_LABELS[type], scope.assessment);
+    });
+    var individualOptions = assessments.filter(function (assessment) {
+      var type = String(assessment.type || '').trim().toUpperCase();
+      return !MERIT_ASSESSMENT_LABELS[type] && !/^CAT/.test(type)
+        && !/CAT|CONTINUOUS/i.test(String(assessment.name || ''));
+    }).map(function (assessment) {
+      return option(assessment.id, assessment.name + (assessment.type ? ' · ' + String(assessment.type).replace(/_/g, ' ') : ''), scope.assessment);
+    });
+    return standardOptions.concat(individualOptions).join('');
+  }
+
+  function applyMeritAssessment(params, assessment) {
+    if (!assessment) return;
+    var selected = String(assessment).trim().toUpperCase();
+    if (selected === 'CAT' || MERIT_ASSESSMENT_LABELS[selected]) params.assessment_type = selected;
+    else params.assessment_id = assessment;
   }
 
   function api(path, opt) {
@@ -301,9 +329,7 @@
         '  <label class="zrc-field"><span>Assessment reproduction</span><select data-zrc-scope="merit" data-zrc-key="assessment">',
         '<option value="">All exams in the term score</option>',
         '<option value="CAT"' + (scope.assessment === 'CAT' ? ' selected' : '') + '>All CATs grouped</option>',
-        (state.options.assessments || []).map(function (a) {
-          return option(a.id, a.name + (a.type ? ' · ' + String(a.type).replace(/_/g, ' ') : ''), scope.assessment);
-        }).join(''),
+        meritAssessmentOptions(scope),
         '</select></label>'
       );
       html.push('  <label class="zrc-field"><span>Class</span><select data-zrc-scope="merit" data-zrc-key="class">' + classOptions(scope.class, true) + '</select></label>');
@@ -577,10 +603,7 @@
       academic_year_id: scope.year, term_id: scope.term, class_id: scope.class,
       pass_mark: scope.pass
     };
-    if (scope.assessment) {
-      if (scope.assessment === 'CAT') params.assessment_type = 'CAT';
-      else params.assessment_id = scope.assessment;
-    }
+    applyMeritAssessment(params, scope.assessment);
     return api('/api/results-centre/' + sid + '/merit?' + qs(params)).then(renderMerit).catch(function (error) {
       panel('merit').innerHTML = contextBar(scope) + '<div class="zrc-notice error">' + esc(error.message) + '</div>';
     });
@@ -1192,8 +1215,7 @@
   function meritParams() {
     var scope = state.meritSel;
     var params = { academic_year_id: scope.year, term_id: scope.term, class_id: scope.class, pass_mark: scope.pass };
-    if (scope.assessment === 'CAT') params.assessment_type = 'CAT';
-    else if (scope.assessment) params.assessment_id = scope.assessment;
+    applyMeritAssessment(params, scope.assessment);
     return params;
   }
 
@@ -1424,7 +1446,7 @@
       state.meritSel.term = termId;
       state.analyticsSel.year = yearId;
       state.analyticsSel.term = termId;
-      return loadCommand();
+      return loadOptions({ academic_year_id: yearId, term_id: termId }).then(loadCommand);
     }).catch(function (error) {
       panel('command').innerHTML = '<div class="zrc-notice error">' + esc(error.message) + '</div>';
     });
