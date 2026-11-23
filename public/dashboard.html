@@ -404,7 +404,12 @@ body, main, .main-content, .dashboard-main {
 <link rel="stylesheet" href="/css/results-centre.css?v=6">
 <link rel="stylesheet" href="/css/assessment-hub.css?v=1">
 <style id="portal-data-view-improvements">
-body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):not(.zrc-matrix) tbody tr:nth-child(even)>td{background:rgba(255,255,255,.075)!important;color:#eef4fb!important}
+body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):not(.zrc-matrix) tbody td{background:rgba(12,27,45,.62)!important;color:#e5edf5!important}
+body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):not(.zrc-matrix) tbody tr:nth-child(even)>td{background:rgba(29,52,77,.66)!important}
+.analytics-kpi,.analytics-panel,.analytics-card,.assessment-chip,.teacher-step,.teacher-assignment-card,.teacher-class-list-card,.class-list-tile,.resource-category,.resource-row,.za-tile,.za-detail,.publication-summary-grid .publication-stat,.publication-history-card,.publication-learner-card,.publication-guardian-card{background:linear-gradient(145deg,#122a45,#183553)!important;border-color:rgba(255,255,255,.16)!important;color:#e5edf5!important}
+.analytics-kpi span,.analytics-kpi strong,.analytics-kpi small,.analytics-panel h3,.analytics-card,.assessment-chip b,.assessment-chip small,.teacher-step,.teacher-assignment-card h3,.teacher-assignment-card .assignment-teacher,.teacher-class-list-card h4,.class-list-tile h3,.class-list-tile .class-count,.resource-category,.resource-row,.za-tile,.za-tile strong,.za-tile small,.za-detail,.publication-stat strong,.publication-history-card h4,.publication-history-card p,.publication-learner-card,.publication-guardian-card{color:#e5edf5!important}
+.publication-guardian-card{background:rgba(9,21,37,.72)!important}
+.publication-history-card .publication-failure{color:#ffb4ad!important}
 .record-class-group{margin:0 0 10px;border:1px solid rgba(255,255,255,.16);border-radius:11px;background:rgba(11,28,47,.68);overflow:hidden}
 .record-class-group>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;color:#f2d89d;font-weight:800;cursor:pointer;list-style-position:inside}
 .record-class-group>summary::marker{color:#e2b65c}
@@ -751,7 +756,7 @@ body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):n
 <section id="markControl" class="nav-managed-section card admin-only"><div class="section-title"><h2>Mark Entry Control Centre</h2><span class="pill">Deadlines · Reopen</span></div><div class="grid"><label>Academic year<select id="mcYear"></select></label><label>Term<select id="mcTerm"></select></label><label>Class<select id="mcClass"></select></label><label>Assessment<select id="mcAssessment"></select></label><label>Deadline<input id="mcDeadline" type="datetime-local"></label></div><div class="notice"><b>Teacher mark-entry control:</b> choose the class, assessment and deadline, then click <b>Save deadline</b>. The deadline applies across all subjects in that class for the selected assessment type. A blank deadline leaves mark entry open until you close it.</div><div class="actions"><button class="btn" id="saveDeadline" type="button">Save deadline</button><button class="btn secondary" id="closeAssessment" type="button">Close mark entry</button></div><div id="deadlineMsg" class="notice">Set a deadline for each assessment. Teachers are automatically locked after the deadline.</div><div class="actions"><button type="button" class="btn secondary" id="openResultsPublishing">Open Results Publishing &amp; Parent SMS</button></div></section><section id="publishResults" class="nav-managed-section card admin-only"><div class="section-title"><div><h2>Results Sent to Parents Management Centre</h2><p class="muted small">Browse by class, inspect each publication and review parent SMS delivery without filling the screen with individual records.</p></div><span class="pill">Classes → Publications → Learners</span></div><button type="button" class="btn secondary" id="returnToMarkControl">← Mark Entry Control Centre</button>
 <div class="card-subsection" aria-label="History filters">
  <h3>History filters</h3>
- <div class="grid"><label>Academic year<select id="pubYear"></select></label><label>Term<select id="pubTerm"></select></label><label>Assessment<select id="pubAssessment"></select></label></div>
+ <div class="grid"><label>Academic year<select id="pubYear"></select></label><label>Term<select id="pubTerm"></select></label><label>Assessment (grouped across subjects)<select id="pubAssessment"></select></label></div>
  <div id="publicationDeliveryStatus" class="notice" role="status"></div>
 </div>
 <details id="publicationPublishControls" class="card-subsection publication-publish-controls" aria-label="Publish results">
@@ -2151,6 +2156,7 @@ async function loadControlAssessments(refreshTerm=true){const y=$('mcYear').valu
 let classOverviewSelection=new Set();
 let publicationClasses=[];
 let selectedPublicationClass=null;
+let publishAssessmentGroups=new Map();
 function classOverviewStatus(c){
  if(!c.learners_with_results)return'No marks yet';
  if(c.results_published>=c.learners_with_results)return'Fully published';
@@ -2167,13 +2173,32 @@ function updatePublishSelectedState(){
 async function loadPublishAssessments(){
  const sel=$('pubAssessment');if(!sel)return;
  const y=$('pubYear')?.value,t=$('pubTerm')?.value,keep=sel.value;
+ publishAssessmentGroups=new Map();
  sel.innerHTML='<option value="">All assessments · full term report</option>';
  if(!y||!t)return;
  try{
   const rows=await api('/api/assessments/'+encodeURIComponent(sid)+'/'+encodeURIComponent(y)+'/'+encodeURIComponent(t));
-  sel.innerHTML+=(Array.isArray(rows)?rows:[]).map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+'</option>').join('');
+  const grouped=new Map();
+  for(const assessment of Array.isArray(rows)?rows:[]){
+   const type=String(assessment.assessment_type||'').trim().toUpperCase().replace(/[-\s]+/g,'_');
+   const standard=['OPENER','MID_TERM','END_TERM'].includes(type);
+   const name=String(assessment.name||'').trim().toUpperCase().replace(/\s+/g,' ');
+   const key=standard?type:`${type}|${name}`;
+   if(!grouped.has(key))grouped.set(key,[]);
+   grouped.get(key).push(assessment);
+  }
+  const groups=[...grouped.values()];
+  sel.innerHTML+=groups.map(items=>{
+   const representative=items[0],ids=[...new Set(items.map(item=>String(item.id)))];
+   const label=configuredAssessmentLabel(representative);
+   publishAssessmentGroups.set(String(representative.id),{ids,label});
+   return '<option value="'+esc(representative.id)+'">'+esc(label)+'</option>';
+  }).join('');
   if(keep&&[...sel.options].some(o=>o.value===keep))sel.value=keep;
- }catch(e){}
+ }catch(e){
+  const msg=$('publishMsg');
+  if(msg){msg.style.display='block';msg.textContent='Unable to load assessment choices: '+e.message;}
+ }
 }
 async function loadClassOverview(){
  const yearId=$('pubYear')?.value,termId=$('pubTerm')?.value,holder=$('classOverview');
@@ -2184,7 +2209,11 @@ async function loadClassOverview(){
  try{
   const assessmentId=$('pubAssessment')?.value||'';
   let url='/api/communications/'+encodeURIComponent(sid)+'/publication-class-overview?academic_year_id='+encodeURIComponent(yearId)+'&term_id='+encodeURIComponent(termId);
-  if(assessmentId)url+='&assessment_id='+encodeURIComponent(assessmentId);
+  if(assessmentId){
+   const group=publishAssessmentGroups.get(assessmentId);
+   url+='&assessment_id='+encodeURIComponent(assessmentId);
+   if(group)url+='&assessment_ids='+encodeURIComponent(group.ids.join(','));
+  }
   const r=await api(url);
   renderClassOverview(r.classes||[]);
  }catch(e){holder.innerHTML='<div class="notice" role="alert">Unable to load classes: '+esc(e.message)+'</div>';}
@@ -2201,14 +2230,15 @@ function renderClassOverview(classes){
 async function publishSelectedClasses(){
  const yearId=$('pubYear')?.value,termId=$('pubTerm')?.value,assessmentId=$('pubAssessment')?.value||'',classIds=[...classOverviewSelection],msg=$('publishMsg');
  if(!yearId||!termId||!classIds.length)return;
- const scopeLabel=assessmentId||'all assessments (full term report)';
+ const assessmentGroup=publishAssessmentGroups.get(assessmentId);
+ const scopeLabel=assessmentGroup?.label||'all assessments (full term report)';
  if(!confirm('Publish results for '+scopeLabel+' and notify parents in '+classIds.length+' selected class(es)?'))return;
  const btn=$('publishSelectedClasses');btn.disabled=true;btn.textContent='Publishing…';
  if(msg){msg.style.display='block';msg.textContent='Publishing results…';}
  try{
   const endpoint=assessmentId?'/publication-assessment':'/result-publications';
   const payload={academic_year_id:yearId,term_id:termId,class_ids:classIds};
-  if(assessmentId)payload.assessment_id=assessmentId;
+  if(assessmentId){payload.assessment_id=assessmentId;payload.assessment_ids=assessmentGroup?.ids||[assessmentId];}
   const r=await api('/api/communications/'+encodeURIComponent(sid)+endpoint,{method:'POST',body:payload});
   if(msg)msg.textContent='Results published and saved for '+r.published+' learner(s); skipped: '+r.skipped+'. Sending parent SMS…';
   const n=await api('/api/communications/'+encodeURIComponent(sid)+'/result-publications/'+encodeURIComponent(r.publication.id)+'/notifications',{method:'POST',body:{}});

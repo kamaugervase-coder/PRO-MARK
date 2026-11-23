@@ -89,7 +89,7 @@ async function ensureAssessmentPublishSchema(){
  if(!result.rows[0]?.publications_column||!result.rows[0]?.records_column)
   throw Object.assign(new Error('Apply database migration 036_publish_per_assessment.sql before publishing per assessment.'),{status:503});
 }
-async function assessmentResultSnapshot(sid,learnerId,yearId,termId,assessmentId){
+async function assessmentResultSnapshot(sid,learnerId,yearId,termId,assessmentId,assessmentIds=[assessmentId]){
  const meta=(await db.query(`
   SELECT a.id assessment_id,a.name assessment_name,
     CONCAT_WS(' ',l.first_name,l.middle_name,l.last_name) learner_name,l.admission_no,sc.name school_name
@@ -100,9 +100,9 @@ async function assessmentResultSnapshot(sid,learnerId,yearId,termId,assessmentId
  const marks=(await db.query(`
   SELECT s.id subject_id,s.name subject_name,m.mark,a.max_mark
   FROM marks m JOIN subjects s ON s.id=m.subject_id JOIN assessments a ON a.id=m.assessment_id
-  WHERE m.school_id=$1 AND m.learner_id=$2 AND m.academic_year_id=$3 AND m.term_id=$4 AND m.assessment_id=$5 AND m.mark IS NOT NULL
+  WHERE m.school_id=$1 AND m.learner_id=$2 AND m.academic_year_id=$3 AND m.term_id=$4 AND m.assessment_id=ANY($5::uuid[]) AND m.mark IS NOT NULL
   ORDER BY s.name
- `,[sid,learnerId,yearId,termId,assessmentId])).rows;
+ `,[sid,learnerId,yearId,termId,assessmentIds])).rows;
  if(!marks.length)return null;
  const subjects=marks.map(x=>({subject_id:x.subject_id,subject_name:x.subject_name,mark:Number(x.mark),max_mark:Number(x.max_mark||100),percent:Number(x.max_mark)>0?Number((Number(x.mark)/Number(x.max_mark)*100).toFixed(2)):null}));
  const scored=subjects.filter(x=>x.percent!==null);
@@ -249,6 +249,14 @@ function publicationIds(value){
  if(Array.isArray(value))return value.map(String).filter(Boolean);
  if(typeof value==='string')return value.split(',').map(x=>x.trim()).filter(Boolean);
  return [];
+}
+function areAssessmentGroupCompatible(assessments){
+ if(!assessments.length)return false;
+ const types=new Set(assessments.map(a=>String(a.assessment_type||'').trim().toUpperCase()));
+ if(types.size!==1)return false;
+ if(['OPENER','MID_TERM','END_TERM'].includes([...types][0]))return true;
+ const names=new Set(assessments.map(a=>String(a.name||'').trim().toLocaleLowerCase().replace(/\s+/g,' ')));
+ return names.size===1;
 }
 async function ensurePublicationSchema(){
  const result=await db.query(`
@@ -912,13 +920,17 @@ router.post('/:schoolId/result-publications/:publicationId/notifications',school
 router.post('/:schoolId/publish-grade-results',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{try{const sid=req.params.schoolId,b=req.body||{};if(!b.academic_year_id||!b.term_id||!b.level_id)return res.status(400).json({error:'Academic year, term and grade are required'});const learners=(await db.query(`SELECT DISTINCT l.id,l.first_name,l.middle_name,l.last_name FROM learner_enrollments e JOIN learners l ON l.id=e.learner_id JOIN classes c ON c.id=e.class_id WHERE e.school_id=$1 AND e.academic_year_id=$2 AND c.school_level_id=$3 AND COALESCE(e.status,'ACTIVE')='ACTIVE'`,[sid,b.academic_year_id,b.level_id])).rows;let queued=0,skipped=0,failed=0;for(const l of learners){const report=await buildTermReport(sid,l.id,b.academic_year_id,b.term_id);if(!report){skipped++;continue}const guardians=(await db.query(`SELECT pg.id,pg.phone FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id WHERE pg.school_id=$1 AND lg.learner_id=$2 AND pg.is_active AND pg.sms_enabled AND pg.communication_consent AND COALESCE(trim(pg.phone),'')<>''`,[sid,l.id])).rows;if(!guardians.length){skipped++;continue}const subjectSummary=(report.subjects||[]).map(x=>`${x.subject_code||x.subject_name}:${x.average==null?'—':Number(x.average).toFixed(1)}${x.grade?'/'+x.grade:''}`).join(', ');const body=String(b.message_template||`${report.school_name}: ${report.learner_name} ${report.term_name||'term'} results. Average ${report.overall_average==null?'—':Number(report.overall_average).toFixed(2)}, grade ${report.overall_grade||'—'}. Marks: ${subjectSummary||'See portal for full report.'}`).replaceAll('{learner}',report.learner_name).replaceAll('{average}',report.overall_average==null?'—':Number(report.overall_average).toFixed(2)).replaceAll('{grade}',report.overall_grade||'—').replaceAll('{marks}',subjectSummary);for(const g of guardians){let status='QUEUED',provider=process.env.SMS_PROVIDER||'UNCONFIGURED',reason=null;try{const d=await deliverSms({phone:g.phone,message:body,school_id:sid,learner_id:l.id});status=d.status;provider=d.provider;}catch(e){reason=e.message;status='FAILED';failed++;}await db.query(`INSERT INTO communication_messages(school_id,learner_id,parent_guardian_id,channel,message_type,body,status,provider,failure_reason,created_by,sent_at) VALUES($1,$2,$3,'SMS','PUBLISHED_RESULTS',$4,$5,$6,$7,$8,CASE WHEN $5='SENT' THEN now() ELSE NULL END)`,[sid,l.id,g.id,body,status,provider,reason,req.user.user_id]);if(status==='SENT'||status==='QUEUED')queued++;}}res.status(201).json({learners:learners.length,queued,skipped,failed,message:(String(process.env.SMS_PROVIDER||'').toUpperCase()==='TOPMEDIA'&&process.env.SMS_TOPMEDIA_API_KEY)?'Results sent through TopMediaSMS.':(String(process.env.SMS_PROVIDER||'').toUpperCase()==='AFRICASTALKING'&&process.env.SMS_AFRICA_TALKING_API_KEY)?"Results sent through Africa's Talking SMS.":(process.env.SMS_WEBHOOK_URL?'Results sent through the configured SMS webhook.':'Results queued safely; configure an SMS provider for live delivery.')});}catch(e){res.status(400).json({error:e.message})}});
 router.get('/:schoolId/publication-class-overview',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{
  try{
-  const sid=req.params.schoolId,yearId=String(req.query.academic_year_id||''),termId=String(req.query.term_id||''),assessmentId=String(req.query.assessment_id||'');
+  const sid=req.params.schoolId,yearId=String(req.query.academic_year_id||''),termId=String(req.query.term_id||'');
+  const assessmentIds=publicationIds(req.query.assessment_ids);
+  const assessmentId=String(req.query.assessment_id||assessmentIds[0]||'');
+  if(assessmentId&&!assessmentIds.includes(assessmentId))assessmentIds.unshift(assessmentId);
   await ensureResultsCentreSchema();
   await validatePublicationScope(sid,yearId,termId,[],[]);
-  if(assessmentId){
+  if(assessmentIds.length){
    await ensureAssessmentPublishSchema();
-   const assessment=(await db.query('SELECT id FROM assessments WHERE id=$1 AND school_id=$2 AND academic_year_id=$3 AND term_id=$4',[assessmentId,sid,yearId,termId])).rows[0];
-   if(!assessment)return res.status(404).json({error:'The selected assessment was not found for this year and term.'});
+   if(assessmentIds.length>1000)return res.status(400).json({error:'Too many assessments were selected.'});
+   const assessments=(await db.query('SELECT id FROM assessments WHERE id=ANY($1::uuid[]) AND school_id=$2 AND academic_year_id=$3 AND term_id=$4',[assessmentIds,sid,yearId,termId])).rows;
+   if(assessments.length!==new Set(assessmentIds).size)return res.status(404).json({error:'One or more selected assessments were not found for this year and term.'});
    const q=await db.query(`
     SELECT c.id class_id,c.name class_name,c.stream,lv.name level_name,
      COUNT(DISTINCT l.id)::int learners,
@@ -930,13 +942,13 @@ router.get('/:schoolId/publication-class-overview',schoolBoundary,roles('SCHOOL_
     LEFT JOIN school_levels lv ON lv.id=c.school_level_id
     LEFT JOIN learner_enrollments e ON e.class_id=c.id AND e.school_id=c.school_id AND e.academic_year_id=$2 AND COALESCE(e.status,'ACTIVE') IN ('ACTIVE','COMPLETED')
     LEFT JOIN learners l ON l.id=e.learner_id AND l.school_id=c.school_id AND COALESCE(l.is_active,true)=true
-    LEFT JOIN marks m ON m.learner_id=e.learner_id AND m.school_id=c.school_id AND m.academic_year_id=e.academic_year_id AND m.term_id=$3 AND m.assessment_id=$4 AND m.mark IS NOT NULL
-    LEFT JOIN result_publication_records pgr ON pgr.learner_id=e.learner_id AND pgr.school_id=c.school_id AND pgr.academic_year_id=e.academic_year_id AND pgr.term_id=$3 AND pgr.assessment_id=$4
+    LEFT JOIN marks m ON m.learner_id=e.learner_id AND m.class_id=c.id AND m.school_id=c.school_id AND m.academic_year_id=e.academic_year_id AND m.term_id=$3 AND m.assessment_id=ANY($4::uuid[]) AND m.mark IS NOT NULL
+    LEFT JOIN result_publication_records pgr ON pgr.learner_id=e.learner_id AND pgr.class_id=c.id AND pgr.school_id=c.school_id AND pgr.academic_year_id=e.academic_year_id AND pgr.term_id=$3 AND pgr.assessment_id=$5
     LEFT JOIN learner_guardians lg ON lg.learner_id=e.learner_id
     LEFT JOIN parent_guardians pg ON pg.id=lg.parent_guardian_id AND pg.school_id=c.school_id AND COALESCE(pg.is_active,false)=true AND COALESCE(pg.sms_enabled,false)=true AND COALESCE(pg.communication_consent,false)=true AND COALESCE(trim(pg.phone),'')<>''
     WHERE c.school_id=$1 AND COALESCE(c.is_active,true)=true
     GROUP BY c.id,lv.id,lv.name,lv.sort_order
-    ORDER BY lv.sort_order,c.name,c.stream`,[sid,yearId,termId,assessmentId]);
+    ORDER BY lv.sort_order,c.name,c.stream`,[sid,yearId,termId,assessmentIds,assessmentId]);
    return res.json({academic_year_id:yearId,term_id:termId,assessment_id:assessmentId,classes:q.rows});
   }
   const q=await db.query(`
@@ -965,26 +977,32 @@ router.post('/:schoolId/publication-assessment',schoolBoundary,roles('SCHOOL_ADM
  let client;
  try{
   const sid=req.params.schoolId,b=req.body||{};
-  const yearId=String(b.academic_year_id||''),termId=String(b.term_id||''),assessmentId=String(b.assessment_id||''),classIds=publicationIds(b.class_ids);
+  const yearId=String(b.academic_year_id||''),termId=String(b.term_id||''),classIds=publicationIds(b.class_ids);
+  const assessmentIds=publicationIds(b.assessment_ids);
+  const assessmentId=String(b.assessment_id||assessmentIds[0]||'');
+  if(assessmentId&&!assessmentIds.includes(assessmentId))assessmentIds.unshift(assessmentId);
   await ensureResultsCentreSchema();
   await ensureAssessmentPublishSchema();
   await validatePublicationScope(sid,yearId,termId,[],classIds);
   if(!assessmentId)return res.status(400).json({error:'Select an assessment to publish.'});
+  if(assessmentIds.length>1000)return res.status(400).json({error:'Too many assessments were selected.'});
   if(!classIds.length)return res.status(400).json({error:'Select at least one class.'});
-  const assessment=(await db.query('SELECT id FROM assessments WHERE id=$1 AND school_id=$2 AND academic_year_id=$3 AND term_id=$4',[assessmentId,sid,yearId,termId])).rows[0];
-  if(!assessment)return res.status(404).json({error:'The selected assessment was not found for this year and term.'});
+  const assessments=(await db.query('SELECT id,assessment_type,name FROM assessments WHERE id=ANY($1::uuid[]) AND school_id=$2 AND academic_year_id=$3 AND term_id=$4',[assessmentIds,sid,yearId,termId])).rows;
+  if(assessments.length!==new Set(assessmentIds).size)return res.status(404).json({error:'One or more selected assessments were not found for this year and term.'});
+  if(!areAssessmentGroupCompatible(assessments))
+   return res.status(400).json({error:'Selected assessment records must belong to one assessment type and name.'});
   const learners=(await db.query(`
    SELECT DISTINCT l.id,l.first_name,l.middle_name,l.last_name,m.class_id
    FROM marks m JOIN learners l ON l.id=m.learner_id AND l.school_id=m.school_id
    JOIN classes c ON c.id=m.class_id AND c.school_id=m.school_id
-   WHERE m.school_id=$1 AND m.academic_year_id=$2 AND m.term_id=$3 AND m.assessment_id=$4 AND m.mark IS NOT NULL
+   WHERE m.school_id=$1 AND m.academic_year_id=$2 AND m.term_id=$3 AND m.assessment_id=ANY($4::uuid[]) AND m.mark IS NOT NULL
     AND c.id=ANY($5::uuid[]) AND COALESCE(l.is_active,true)=true
-   ORDER BY l.last_name,l.first_name`,[sid,yearId,termId,assessmentId,classIds])).rows;
+   ORDER BY l.last_name,l.first_name`,[sid,yearId,termId,assessmentIds,classIds])).rows;
   const prepared=[],skipped=[];
   for(const learner of learners){
    const exists=await db.query('SELECT 1 FROM result_publication_records WHERE school_id=$1 AND learner_id=$2 AND academic_year_id=$3 AND term_id=$4 AND assessment_id=$5 LIMIT 1',[sid,learner.id,yearId,termId,assessmentId]);
    if(exists.rowCount){skipped.push({learner_id:learner.id,reason:'This assessment was already published for this learner.'});continue;}
-   const snapshot=await assessmentResultSnapshot(sid,learner.id,yearId,termId,assessmentId);
+   const snapshot=await assessmentResultSnapshot(sid,learner.id,yearId,termId,assessmentId,assessmentIds);
    if(!snapshot){skipped.push({learner_id:learner.id,reason:'No saved marks for this assessment.'});continue;}
    prepared.push({learner,snapshot});
   }
@@ -1227,3 +1245,4 @@ router.get('/:schoolId/analytics',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN','H
 router.get('/:schoolId/sms-balance',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{try{const provider=String(process.env.SMS_PROVIDER||'').toUpperCase();if(provider!=='TOPMEDIA')return res.status(400).json({error:'SMS_PROVIDER must be set to TOPMEDIA to check the TopMediaSMS balance.'});const apiKey=process.env.SMS_TOPMEDIA_API_KEY||process.env.TOPMEDIA_API_KEY;if(!apiKey)return res.status(503).json({error:'Set SMS_TOPMEDIA_API_KEY on the server before checking the balance.'});const base=String(process.env.SMS_TOPMEDIA_BASE_URL||'https://api.topmediasms.com/v1').trim().replace(/\/+$/, '');const rr=await fetch(base+'/api-balance',{headers:{Accept:'application/json',Authorization:'Bearer '+apiKey}});const data=await rr.json().catch(()=>({}));if(!rr.ok)throw new Error(data?.message||('TopMediaSMS returned '+rr.status));res.json({provider:'TOPMEDIA',balance:data?.balance??null,currency:data?.currency||null,sandbox:Boolean(data?.sandbox)})}catch(e){res.status(e.status||502).json({error:e.message})}});
 module.exports=router;
 module.exports.buildPublicationSummary=buildPublicationSummary;
+module.exports.areAssessmentGroupCompatible=areAssessmentGroupCompatible;
