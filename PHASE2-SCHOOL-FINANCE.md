@@ -8,6 +8,8 @@
 - Separate class-specific structures with editable printed instructions; updates affect future assignments without rewriting issued charges.
 - Safe removal: unused structures can be deleted, while structures with issued charges are archived to preserve the learner ledger.
 - Printable school fee structures and learner-specific, itemized fee statements with charges, receipts, totals, credit and balances.
+- Official school-branded fee-structure PDFs, learner account statements, and A5/A6/80 mm receipts; statements retain opening balances, approved adjustments and audited receipt reversals.
+- PDF page dimensions follow the selected physical paper format, with transaction tables continuing across pages and class-bulk statements starting each learner on a new page.
 - Responsive payment entry layout for desktop and mobile screens.
 - Recording of learner payments with generated receipt numbers, method/reference/date/notes.
 - Allocation of payments against the learner's oldest outstanding charges; any excess remains a prepaid account credit and is allocated to later charges.
@@ -21,7 +23,7 @@
 
 ## Database migration required
 
-For a new database, apply `database/028_school_finance_core.sql`, `database/033_school_fee_ledger_integrity.sql`, then `database/034_school_fee_structure_print_notes.sql`. For an existing installation with 028 and 033 applied, apply only migration 034. Take a verified backup first. These migrations are intentionally manual; startup does not apply them automatically. Migration 033 preserves existing receipts and their references, backfills unallocated payment credit against outstanding charges in chronological order, adds duplicate-reference protection for new receipts, and creates the append-only credit-note ledger. Migration 034 adds editable printed instructions to fee structures and has been applied and verified on the configured database.
+For a new database, apply `database/028_school_finance_core.sql`, `database/033_school_fee_ledger_integrity.sql`, `database/034_school_fee_structure_print_notes.sql`, then `database/049_finance_document_enrichment.sql`. For an existing installation, apply whichever of these migrations are missing, in that order. Take a verified backup first. These migrations are intentionally manual; startup does not apply them automatically. Migration 033 preserves existing receipts and their references, backfills unallocated payment credit against outstanding charges in chronological order, adds duplicate-reference protection for new receipts, and creates the append-only credit-note ledger. Migration 034 adds editable printed instructions to fee structures. Migration 049 adds the term, category, applicability and payment-payer fields used by the current finance workspace, along with the financial adjustments table. Expense management additionally requires `database/039_bursar_expense_management.sql`.
 
 ## Current limitations (not yet implemented)
 

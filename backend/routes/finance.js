@@ -37,19 +37,34 @@ router.get('/:schoolId/overview',schoolBoundary,roles(...FINANCE_READ),async(req
    db.query(`SELECT p.*,l.admission_no,l.first_name,l.middle_name,l.last_name,l.class_id,c.name class_name,c.stream,r.credit_note_no,r.reason reversal_reason,r.created_at reversed_at,(r.id IS NOT NULL) reversed FROM school_fee_payments p JOIN learners l ON l.id=p.learner_id LEFT JOIN classes c ON c.id=l.class_id LEFT JOIN school_fee_payment_reversals r ON r.school_id=p.school_id AND r.payment_id=p.id WHERE p.school_id=$1 ORDER BY p.payment_date DESC,p.created_at DESC LIMIT 100`,[sid]),
    db.query(`SELECT COALESCE(charged.total,0) charged,COALESCE(received.total,0) collected,
       COALESCE(received.collected_today,0) collected_today,COALESCE(received.collected_this_month,0) collected_this_month,
-      COALESCE(charged.total,0)-COALESCE(received.total,0) net_balance,
-      GREATEST(COALESCE(charged.total,0)-COALESCE(received.total,0),0) outstanding,
-      GREATEST(COALESCE(received.total,0)-COALESCE(charged.total,0),0) prepaid_credit
-    FROM (SELECT sum(amount) total FROM school_fee_charges WHERE school_id=$1) charged
-    CROSS JOIN (SELECT sum(p.amount) total,
+      COALESCE(charged.total,0)-COALESCE(received.ledger_credits,0) net_balance,
+      GREATEST(COALESCE(charged.total,0)-COALESCE(received.ledger_credits,0),0) outstanding,
+      GREATEST(COALESCE(received.ledger_credits,0)-COALESCE(charged.total,0),0) prepaid_credit
+    FROM (SELECT COALESCE((SELECT sum(amount) FROM school_fee_charges WHERE school_id=$1),0)
+        +COALESCE((SELECT sum(amount) FROM school_finance_adjustments WHERE school_id=$1 AND status='APPROVED' AND direction='DEBIT'),0) total) charged
+    CROSS JOIN (SELECT COALESCE(sum(p.amount),0) total,
+        COALESCE(sum(p.amount),0)
+        +COALESCE((SELECT sum(amount) FROM school_finance_adjustments WHERE school_id=$1 AND status='APPROVED' AND direction='CREDIT'),0) ledger_credits,
         sum(p.amount) FILTER (WHERE p.payment_date=CURRENT_DATE) collected_today,
         sum(p.amount) FILTER (WHERE date_trunc('month',p.payment_date)=date_trunc('month',CURRENT_DATE)) collected_this_month
       FROM school_fee_payments p WHERE p.school_id=$1 AND p.status='CONFIRMED'
         AND NOT EXISTS(SELECT 1 FROM school_fee_payment_reversals r WHERE r.school_id=p.school_id AND r.payment_id=p.id)) received`,[sid]),
-   db.query(`SELECT l.id learner_id,l.admission_no,l.first_name,l.middle_name,l.last_name,l.class_id,c.name class_name,c.stream,COALESCE(ch.total_charged,0) total_charged,COALESCE(pm.total_paid,0) total_paid,COALESCE(ch.total_charged,0)-COALESCE(pm.total_paid,0) balance FROM learners l LEFT JOIN classes c ON c.id=l.class_id LEFT JOIN (SELECT learner_id,sum(amount) total_charged FROM school_fee_charges WHERE school_id=$1 GROUP BY learner_id) ch ON ch.learner_id=l.id LEFT JOIN (SELECT p.learner_id,sum(p.amount) total_paid FROM school_fee_payments p WHERE p.school_id=$1 AND p.status='CONFIRMED' AND NOT EXISTS(SELECT 1 FROM school_fee_payment_reversals r WHERE r.school_id=p.school_id AND r.payment_id=p.id) GROUP BY p.learner_id) pm ON pm.learner_id=l.id WHERE l.school_id=$1 AND COALESCE(l.is_active,true)=true ORDER BY c.name,c.stream,l.last_name,l.first_name`,[sid])
+   db.query(`SELECT l.id learner_id,l.admission_no,l.first_name,l.middle_name,l.last_name,l.class_id,c.name class_name,c.stream,
+     COALESCE(ch.total_charged,0)+COALESCE(adj.total_debit,0) total_charged,
+     COALESCE(pm.total_paid,0) total_paid,
+     COALESCE(adj.total_credit,0) total_credits,
+     COALESCE(ch.total_charged,0)+COALESCE(adj.total_debit,0)-COALESCE(pm.total_paid,0)-COALESCE(adj.total_credit,0) balance
+    FROM learners l LEFT JOIN classes c ON c.id=l.class_id
+    LEFT JOIN (SELECT learner_id,sum(amount) total_charged FROM school_fee_charges WHERE school_id=$1 GROUP BY learner_id) ch ON ch.learner_id=l.id
+    LEFT JOIN (SELECT learner_id,sum(p.amount) total_paid FROM school_fee_payments p WHERE p.school_id=$1 AND p.status='CONFIRMED'
+      AND NOT EXISTS(SELECT 1 FROM school_fee_payment_reversals r WHERE r.school_id=p.school_id AND r.payment_id=p.id) GROUP BY p.learner_id) pm ON pm.learner_id=l.id
+    LEFT JOIN (SELECT learner_id,sum(amount) FILTER (WHERE direction='DEBIT') total_debit,
+      sum(amount) FILTER (WHERE direction='CREDIT') total_credit FROM school_finance_adjustments
+      WHERE school_id=$1 AND status='APPROVED' GROUP BY learner_id) adj ON adj.learner_id=l.id
+    WHERE l.school_id=$1 AND COALESCE(l.is_active,true)=true ORDER BY c.name,c.stream,l.last_name,l.first_name`,[sid])
   ]);
   res.json({structures:structures.rows,learners:learners.rows,charges:charges.rows.map(x=>({...x,amount_paid:money(x.amount_paid),balance:money(Number(x.amount)-Number(x.amount_paid))})),payments:payments.rows,balances:balances.rows,summary:summary.rows[0]});
- }catch(e){console.error('School finance overview failed:',e);res.status(500).json({error:'Unable to load school finance records. Apply database migrations 028_school_finance_core.sql and 033_school_fee_ledger_integrity.sql if they have not been applied.'});}
+ }catch(e){console.error('School finance overview failed:',e);res.status(500).json({error:'Unable to load school finance records. Verify that migrations 028_school_finance_core.sql, 033_school_fee_ledger_integrity.sql, 034_school_fee_structure_print_notes.sql, and 049_finance_document_enrichment.sql have been applied.'});}
 });
 
 router.post('/:schoolId/structures',schoolBoundary,roles(...FINANCE_ACCESS),async(req,res)=>{
@@ -76,7 +91,7 @@ router.post('/:schoolId/structures',schoolBoundary,roles(...FINANCE_ACCESS),asyn
   await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_STRUCTURE_CREATED','school_fee_structure',$3,$4::jsonb)`,[sid,req.user.user_id,q.rows[0].id,JSON.stringify({name,amount,currency,class_id:b.class_id||null,academic_year_id:b.academic_year_id||null,term_id:b.term_id||null,learner_category:learnerCategory,fee_category:feeCategory,is_compulsory:compulsory,applicability,print_notes:printNotes})]);
   await c.query('COMMIT');
   res.status(201).json(q.rows[0]);
- }catch(e){if(c)await c.query('ROLLBACK').catch(()=>{});console.error('Create fee structure failed:',e);res.status(500).json({error:'Could not create fee structure. Ensure migrations 028_school_finance_core.sql, 033_school_fee_ledger_integrity.sql, and 034_school_fee_structure_print_notes.sql have been applied.'});}
+ }catch(e){if(c)await c.query('ROLLBACK').catch(()=>{});console.error('Create fee structure failed:',e);res.status(500).json({error:'Could not create fee structure. Ensure migrations 028_school_finance_core.sql, 033_school_fee_ledger_integrity.sql, 034_school_fee_structure_print_notes.sql, and 049_finance_document_enrichment.sql have been applied.'});}
  finally{if(c)c.release();}
 });
 
@@ -114,7 +129,7 @@ router.patch('/:schoolId/structures/:structureId',schoolBoundary,roles(...FINANC
   await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_STRUCTURE_UPDATED','school_fee_structure',$3,$4::jsonb)`,[sid,req.user.user_id,current.id,JSON.stringify({name,amount:money(amount),due_on:dueOn||null,print_notes:printNotes,is_active:updated.is_active,learner_category:learnerCategory,fee_category:feeCategory,is_compulsory:compulsory,applicability})]);
   await c.query('COMMIT');
   res.json(updated);
- }catch(e){if(c)await c.query('ROLLBACK').catch(()=>{});console.error('Update fee structure failed:',e);res.status(500).json({error:'Could not update fee structure. Ensure migration 034_school_fee_structure_print_notes.sql has been applied.'});}
+ }catch(e){if(c)await c.query('ROLLBACK').catch(()=>{});console.error('Update fee structure failed:',e);res.status(500).json({error:'Could not update fee structure. Ensure migrations 034_school_fee_structure_print_notes.sql and 049_finance_document_enrichment.sql have been applied.'});}
  finally{if(c)c.release();}
 });
 
