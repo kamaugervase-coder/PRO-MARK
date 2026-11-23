@@ -9,7 +9,7 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const clean=(v,n=250)=>String(v||'').trim().slice(0,n);
 const fmt=n=>Number(n||0).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2});
 async function school(sid){const q=await db.query(`SELECT s.name,s.code,si.motto,si.address,si.contact_phone,si.contact_email,si.logo_url,si.primary_color,si.secondary_color,
- (SELECT file_url FROM school_document_assets da WHERE da.school_id=s.id AND da.document_type='OFFICIAL_STAMP' AND da.is_active=true ORDER BY da.effective_from DESC,da.created_at DESC LIMIT 1) stamp_url
+ (SELECT file_url FROM school_document_assets da WHERE da.school_id=s.id AND da.asset_type='STAMP' AND da.is_active=true ORDER BY da.effective_from DESC,da.created_at DESC LIMIT 1) stamp_url
  FROM schools s LEFT JOIN school_identity si ON si.school_id=s.id WHERE s.id=$1`,[sid]);if(!q.rows[0])throw Object.assign(new Error('School not found'),{status:404});return q.rows[0]}
 function pdfStart(res,name){res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`inline; filename="${name}"`);const p=new PDFDocument({size:'A4',margin:50,info:{Title:name,Author:'ZELIMU CBC'}});p.pipe(res);return p}
 function header(p,s,title){p.rect(0,0,595,12).fill('#2264c9');p.fillColor('#17345b').font('Helvetica-Bold').fontSize(18).text(s.name,{align:'center'});p.font('Helvetica').fontSize(9).fillColor('#475569').text([s.address,s.contact_phone,s.contact_email].filter(Boolean).join('  |  '),{align:'center'});p.moveDown(.7);p.strokeColor('#d6e2ef').moveTo(50,p.y).lineTo(545,p.y).stroke();p.moveDown(.8);p.fillColor('#143d75').font('Helvetica-Bold').fontSize(15).text(title,{align:'center'});p.moveDown(1.3)}
