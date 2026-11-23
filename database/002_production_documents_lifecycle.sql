@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS school_announcements(
 CREATE TABLE IF NOT EXISTS communication_messages(
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),school_id uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
  learner_id uuid REFERENCES learners(id) ON DELETE SET NULL,parent_guardian_id uuid REFERENCES parent_guardians(id) ON DELETE SET NULL,
+ class_id uuid REFERENCES classes(id) ON DELETE SET NULL,
  channel text NOT NULL DEFAULT 'SMS',message_type text NOT NULL,body text NOT NULL,status text NOT NULL DEFAULT 'QUEUED',
  provider text,provider_message_id text,failure_reason text,sent_at timestamptz,delivered_at timestamptz,created_by uuid REFERENCES users(id),created_at timestamptz DEFAULT now()
 );
