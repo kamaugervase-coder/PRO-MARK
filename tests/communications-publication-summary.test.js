@@ -26,6 +26,14 @@ assert.equal(areAssessmentGroupCompatible([
   { assessment_type: 'OPENER', name: 'Term 1 Opener' }
 ]), true);
 assert.equal(areAssessmentGroupCompatible([
+  { assessment_type: 'OPENING', name: 'Opening · Class A · Maths' },
+  { assessment_type: 'OPENER', name: 'Opener · Class B · English' }
+]), true);
+assert.equal(areAssessmentGroupCompatible([
+  { assessment_type: 'CUSTOM', name: 'Term 1 End Term · Class A' },
+  { assessment_type: 'CUSTOM', name: 'Term 1 End Term · Class B' }
+]), true);
+assert.equal(areAssessmentGroupCompatible([
   { assessment_type: 'CUSTOM', name: 'Project' },
   { assessment_type: 'CUSTOM', name: ' project ' }
 ]), true);

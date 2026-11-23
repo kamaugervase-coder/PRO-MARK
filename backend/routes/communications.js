@@ -250,8 +250,25 @@ function publicationIds(value){
  if(typeof value==='string')return value.split(',').map(x=>x.trim()).filter(Boolean);
  return [];
 }
+function canonicalPublicationAssessmentType(assessment){
+ const normalize=value=>String(value||'').trim().toUpperCase().replace(/[-\s]+/g,'_');
+ const type=normalize(assessment.assessment_type);
+ const known={OPENER:'OPENER',OPENING:'OPENER',MID_TERM:'MID_TERM',MIDTERM:'MID_TERM',END_TERM:'END_TERM',ENDTERM:'END_TERM'};
+ if(known[type])return known[type];
+ if(/(^|_)OPENER(_|$)/.test(type))return 'OPENER';
+ if(/(^|_)MID_?TERM(_|$)/.test(type))return 'MID_TERM';
+ if(/(^|_)END_?TERM(_|$)/.test(type))return 'END_TERM';
+ if(type&&!['CUSTOM','ASSESSMENT','EXAM'].includes(type))return null;
+ const name=normalize(assessment.name);
+ if(/(^|_)OPENER($|_)/.test(name))return 'OPENER';
+ if(/(^|_)MID_?TERM($|_)/.test(name))return 'MID_TERM';
+ if(/(^|_)END_?TERM($|_)/.test(name))return 'END_TERM';
+ return null;
+}
 function areAssessmentGroupCompatible(assessments){
  if(!assessments.length)return false;
+ const canonicalTypes=new Set(assessments.map(canonicalPublicationAssessmentType));
+ if(canonicalTypes.size===1&&![...canonicalTypes].includes(null))return true;
  const types=new Set(assessments.map(a=>String(a.assessment_type||'').trim().toUpperCase()));
  if(types.size!==1)return false;
  if(['OPENER','MID_TERM','END_TERM'].includes([...types][0]))return true;

@@ -406,10 +406,10 @@ body, main, .main-content, .dashboard-main {
 <style id="portal-data-view-improvements">
 body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):not(.zrc-matrix) tbody td{background:rgba(12,27,45,.62)!important;color:#e5edf5!important}
 body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):not(.zrc-matrix) tbody tr:nth-child(even)>td{background:rgba(29,52,77,.66)!important}
-.analytics-kpi,.analytics-panel,.analytics-card,.assessment-chip,.teacher-step,.teacher-assignment-card,.teacher-class-list-card,.class-list-tile,.resource-category,.resource-row,.za-tile,.za-detail,.publication-summary-grid .publication-stat,.publication-history-card,.publication-learner-card,.publication-guardian-card{background:linear-gradient(145deg,#122a45,#183553)!important;border-color:rgba(255,255,255,.16)!important;color:#e5edf5!important}
-.analytics-kpi span,.analytics-kpi strong,.analytics-kpi small,.analytics-panel h3,.analytics-card,.assessment-chip b,.assessment-chip small,.teacher-step,.teacher-assignment-card h3,.teacher-assignment-card .assignment-teacher,.teacher-class-list-card h4,.class-list-tile h3,.class-list-tile .class-count,.resource-category,.resource-row,.za-tile,.za-tile strong,.za-tile small,.za-detail,.publication-stat strong,.publication-history-card h4,.publication-history-card p,.publication-learner-card,.publication-guardian-card{color:#e5edf5!important}
-.publication-guardian-card{background:rgba(9,21,37,.72)!important}
-.publication-history-card .publication-failure{color:#ffb4ad!important}
+.analytics-kpi,.analytics-panel,.analytics-card,.assessment-chip,.teacher-step,.teacher-assignment-card,.teacher-class-list-card,.class-list-tile,.resource-category,.resource-row,.za-tile,.za-detail,.publication-summary-grid .publication-stat,.publication-history-card,.publication-learner-card,.publication-guardian-card{background:linear-gradient(145deg,#f1fbf4,#e5f5eb)!important;border-color:#c5e4d0!important;color:#244b36!important;box-shadow:0 2px 8px rgba(21,101,63,.08)!important}
+.analytics-kpi span,.analytics-kpi strong,.analytics-kpi small,.analytics-panel h3,.analytics-card,.assessment-chip b,.assessment-chip small,.teacher-step,.teacher-assignment-card h3,.teacher-assignment-card .assignment-teacher,.teacher-class-list-card h4,.class-list-tile h3,.class-list-tile .class-count,.resource-category,.resource-row,.za-tile,.za-tile strong,.za-tile small,.za-detail,.publication-stat strong,.publication-history-card h4,.publication-history-card p,.publication-learner-card,.publication-guardian-card{color:#244b36!important}
+.publication-guardian-card{background:#e8f6ed!important}
+.publication-history-card .publication-failure{color:#a32222!important}
 .record-class-group{margin:0 0 10px;border:1px solid rgba(255,255,255,.16);border-radius:11px;background:rgba(11,28,47,.68);overflow:hidden}
 .record-class-group>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;color:#f2d89d;font-weight:800;cursor:pointer;list-style-position:inside}
 .record-class-group>summary::marker{color:#e2b65c}
@@ -417,9 +417,16 @@ body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):n
 .record-class-group[open]>summary{border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.045)}
 .record-class-group .table-wrap{border:0!important;border-radius:0!important;box-shadow:none!important}
 .record-class-group table{min-width:760px}
-.publication-class-card{background:linear-gradient(145deg,#122a45,#183553)!important;border-color:rgba(255,255,255,.15)!important;color:#e5edf5!important}
-.publication-class-card .publication-class-heading b,.publication-class-card .publication-open-link{color:#f2d89d!important}
-.publication-class-card .muted{color:#c3d0de!important}
+.publication-class-card{background:linear-gradient(145deg,#f1fbf4,#e5f5eb)!important;border-color:#c5e4d0!important;color:#244b36!important;box-shadow:0 2px 8px rgba(21,101,63,.08)!important}
+.publication-class-card .publication-class-heading b,.publication-class-card .publication-open-link{color:#17653e!important}
+.publication-class-card .muted{color:#526b5b!important}
+.publication-class-card:hover,.publication-class-card:focus-visible{border-color:#5aaf79!important;box-shadow:0 3px 10px rgba(21,101,63,.12)!important}
+.publication-history-card,.publication-summary-grid .publication-stat,.publication-learner-card{background:linear-gradient(145deg,#f7fcf8,#edf8f0)!important}
+#publishResults .card-subsection{background:#f4fbf6!important;border-color:#d3eadb!important}
+#publishResults .publication-publish-note{background:#f3f8e9!important;border-color:#dbe8b6!important;color:#536222!important}
+body main.page #zelimuWorkspaceDisplay #publishResults table tbody td{background:#f4fbf6!important;color:#244b36!important}
+body main.page #zelimuWorkspaceDisplay #publishResults table tbody tr:nth-child(even)>td{background:#e8f6ed!important}
+body main.page #zelimuWorkspaceDisplay #publishResults table tbody tr:hover>td{background:#d8efdf!important}
 </style>
 <script defer src="/js/zelimu-gold-theme.js?v=3"></script>
 <script>
@@ -2157,6 +2164,21 @@ let classOverviewSelection=new Set();
 let publicationClasses=[];
 let selectedPublicationClass=null;
 let publishAssessmentGroups=new Map();
+function publicationAssessmentType(assessment){
+ const normalize=value=>String(value||'').trim().toUpperCase().replace(/[-\s]+/g,'_');
+ const type=normalize(assessment.assessment_type);
+ const known={OPENER:'OPENER',OPENING:'OPENER',MID_TERM:'MID_TERM',MIDTERM:'MID_TERM',END_TERM:'END_TERM',ENDTERM:'END_TERM'};
+ if(known[type])return known[type];
+ if(/(^|_)OPENER(_|$)/.test(type))return'OPENER';
+ if(/(^|_)MID_?TERM(_|$)/.test(type))return'MID_TERM';
+ if(/(^|_)END_?TERM(_|$)/.test(type))return'END_TERM';
+ if(type&&!['CUSTOM','ASSESSMENT','EXAM'].includes(type))return'';
+ const name=normalize(assessment.name);
+ if(/(^|_)OPENER($|_)/.test(name))return'OPENER';
+ if(/(^|_)MID_?TERM($|_)/.test(name))return'MID_TERM';
+ if(/(^|_)END_?TERM($|_)/.test(name))return'END_TERM';
+ return'';
+}
 function classOverviewStatus(c){
  if(!c.learners_with_results)return'No marks yet';
  if(c.results_published>=c.learners_with_results)return'Fully published';
@@ -2180,17 +2202,17 @@ async function loadPublishAssessments(){
   const rows=await api('/api/assessments/'+encodeURIComponent(sid)+'/'+encodeURIComponent(y)+'/'+encodeURIComponent(t));
   const grouped=new Map();
   for(const assessment of Array.isArray(rows)?rows:[]){
-   const type=String(assessment.assessment_type||'').trim().toUpperCase().replace(/[-\s]+/g,'_');
-   const standard=['OPENER','MID_TERM','END_TERM'].includes(type);
+   const type=publicationAssessmentType(assessment);
+   const rawType=String(assessment.assessment_type||'').trim().toUpperCase().replace(/[-\s]+/g,'_');
    const name=String(assessment.name||'').trim().toUpperCase().replace(/\s+/g,' ');
-   const key=standard?type:`${type}|${name}`;
+   const key=type||`${rawType}|${name}`;
    if(!grouped.has(key))grouped.set(key,[]);
    grouped.get(key).push(assessment);
   }
   const groups=[...grouped.values()];
   sel.innerHTML+=groups.map(items=>{
    const representative=items[0],ids=[...new Set(items.map(item=>String(item.id)))];
-   const label=configuredAssessmentLabel(representative);
+   const label=({OPENER:'Opener',MID_TERM:'Mid Term',END_TERM:'End Term'})[publicationAssessmentType(representative)]||configuredAssessmentLabel(representative);
    publishAssessmentGroups.set(String(representative.id),{ids,label});
    return '<option value="'+esc(representative.id)+'">'+esc(label)+'</option>';
   }).join('');
