@@ -427,6 +427,29 @@ body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):n
 body main.page #zelimuWorkspaceDisplay #publishResults table tbody td{background:#f4fbf6!important;color:#244b36!important}
 body main.page #zelimuWorkspaceDisplay #publishResults table tbody tr:nth-child(even)>td{background:#e8f6ed!important}
 body main.page #zelimuWorkspaceDisplay #publishResults table tbody tr:hover>td{background:#d8efdf!important}
+body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{display:flex!important;flex-direction:column;height:calc(100dvh - 120px);min-height:0!important;max-height:calc(100dvh - 120px);overflow:hidden!important;padding:12px!important}
+body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active>.section-title{flex:0 0 auto;margin:0 0 8px!important;padding-bottom:8px!important}
+body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Content{display:flex!important;flex:1 1 auto;min-height:0;margin:0!important;overflow:hidden}
+body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Data{display:grid!important;grid-template-columns:minmax(300px,.78fr) minmax(0,1.22fr);gap:12px;margin:0!important;min-height:0;flex:1 1 auto;overflow:hidden}
+#pm24Data.cm-workspace>.analytics-panel{display:flex;flex-direction:column;min-width:0;min-height:0;margin:0;padding:14px;overflow:hidden}
+.cm-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.cm-panel-heading h3{margin:0}
+.cm-context-grid,.cm-recipient-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.cm-compose-panel{gap:9px}
+.cm-compose-panel label{display:flex;flex-direction:column;gap:4px;min-width:0;margin:0}
+.cm-compose-panel select,.cm-compose-panel textarea{width:100%;min-width:0}
+.cm-compose-panel textarea{resize:vertical;min-height:96px;max-height:190px}
+.cm-history-panel .cm-panel-heading{flex:0 0 auto}
+#cmHistory{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+#cmHistory .record-class-group{background:#f5fbf7;border-color:#cfe4d6}
+#cmHistory .record-class-group>summary{color:#245b3d}
+#cmHistory .record-class-group>summary span{color:#496d56}
+#cmHistory .record-class-group[open]>summary{background:#e8f6ed;border-bottom-color:#cfe4d6}
+body main.page #zelimuWorkspaceDisplay #pm24Data.cm-workspace table tbody td{background:#f5fbf7!important;color:#244b36!important}
+body main.page #zelimuWorkspaceDisplay #pm24Data.cm-workspace table tbody tr:nth-child(even)>td{background:#eaf6ee!important}
+@media(max-width:900px){body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{height:calc(100dvh - 125px);max-height:calc(100dvh - 125px)}body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Data{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1.15fr) minmax(0,.85fr);overflow:hidden}.cm-compose-panel{overflow-y:auto}.cm-compose-panel textarea{max-height:110px}}
+@media(max-width:760px){body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{height:calc(100dvh - 150px);max-height:calc(100dvh - 150px)}}
+@media(max-width:480px){.cm-context-grid,.cm-recipient-grid{grid-template-columns:minmax(0,1fr);gap:6px}#pm24Data.cm-workspace>.analytics-panel{padding:10px}}
 </style>
 <script defer src="/js/zelimu-gold-theme.js?v=3"></script>
 <script>
@@ -2448,28 +2471,103 @@ async function renderTeacherControlWorkspace(){
  $('qTeacherAssignment').onsubmit=async e=>{e.preventDefault();try{await api(`/api/people/${sid}/assignments`,{method:'POST',body:Object.fromEntries(new FormData(e.target))});await reload();alert('Subject/class assignment saved.');}catch(x){alert(x.message);}};
  $('qClassTeacher').onsubmit=async e=>{e.preventDefault();try{await api(`/api/people/${sid}/class-teachers`,{method:'POST',body:Object.fromEntries(new FormData(e.target))});await reload();alert('Class Teacher assigned. The existing subject assignments were retained and mark entry was enabled.');}catch(x){alert(x.message);}};await reload();
 }
-async function renderCommunicationModule(){const box=$('pm24Data');box.innerHTML=`<div class="analytics-panel"><h3>Parent & Guardian Messaging Centre</h3><p class="muted small">Send SMS messages to parents and guardians. Results publishing lives in Examination Control → Results Publishing Centre.</p><div class="grid"><label>Academic year<select id="cmYear"></select></label><label>Term<select id="cmTerm"></select></label></div><hr><h3>Send an SMS to parents</h3><div class="grid"><label>Recipient<select id="cmRecipient"><option value="class">All linked parents in class</option><option value="learner">Parents of one learner</option><option value="parent">One parent / guardian</option></select></label><label>Class<select id="cmMessageClass"></select></label><label>Learner<select id="cmLearner"></select></label><label>Parent<select id="cmParent"></select></label></div><textarea id="cmMessage" rows="4" placeholder="Type your school message…"></textarea><div class="actions"><button class="btn" id="cmSend">SEND SMS</button></div><div id="cmSendMsg" class="notice"></div><hr><div class="section-title"><div><h3>Recent communication history</h3><p class="muted small">Open a class to review its recent parent messages.</p></div></div><div id="cmHistory">Loading…</div></div>`;opts($('cmYear'),state.years,x=>x.year_label,'Select academic year');opts($('cmMessageClass'),state.classes,x=>`${x.name} ${x.stream||''}`,'Select class');opts($('cmLearner'),[],x=>`${x.first_name||''} ${x.last_name||''}`,'Select learner');if(state.years.length){$('cmYear').value=state.academicPeriod?.yearId||state.years[0].id;}
- const loadTerms=async()=>{const y=$('cmYear').value;if(!y){opts($('cmTerm'),[],()=>{},'Select term');return;}await terms(y,$('cmTerm'));};
- const loadParents=async()=>{try{const p=await api(`/api/communications/${sid}/parents`);opts($('cmParent'),p,x=>`${x.first_name||''} ${x.last_name||''} · ${x.phone||'No phone'} · ${x.sms_enabled?'SMS ON':'SMS OFF'} · ${x.communication_consent?'Consent ON':'Consent OFF'}`,'Select parent / guardian');}catch(e){opts($('cmParent'),[],()=>{},'Unable to load parents');}};
- const loadClassLearners=async()=>{const c=$('cmMessageClass').value,y=$('cmYear').value,t=$('cmTerm').value;if(!c||!y||!t){opts($('cmLearner'),[],()=>{},'Select class and term first');return;}try{const rows=await api(`/api/reports/${sid}/class/${c}/${y}/${t}/learners`);opts($('cmLearner'),rows,x=>`${x.first_name||''} ${x.last_name||''} · ${x.admission_no||''}`,'Select learner');}catch(e){opts($('cmLearner'),state.learners.filter(x=>String(x.class_id)===String(c)),x=>`${x.first_name||''} ${x.last_name||''} · ${x.admission_no||''}`,'Select learner');}};
- const loadHistory=async()=>{try{const h=await api(`/api/communications/${sid}/history`),groups=new Map();h.slice(0,100).forEach(x=>{const key=x.class_id||'unassigned';if(!groups.has(key))groups.set(key,{label:x.class_name?`${x.class_name}${x.stream?' · '+x.stream:''}`:'Other / individual messages',rows:[]});groups.get(key).rows.push(x);});$('cmHistory').innerHTML=[...groups.values()].map(group=>`<details class="record-class-group"><summary>${esc(group.label)}<span>${group.rows.length} message(s)</span></summary><div class="table-wrap"><table><thead><tr><th>Date</th><th>Parent</th><th>Type</th><th>Status</th><th>Message</th></tr></thead><tbody>${group.rows.map(x=>`<tr><td>${esc(new Date(x.created_at).toLocaleString())}</td><td>${esc((x.parent_first_name||'')+' '+(x.parent_last_name||''))}<br>${esc(x.phone||'')}</td><td>${esc(x.message_type)}</td><td>${esc(x.status)}</td><td>${esc(x.body)}</td></tr>`).join('')}</tbody></table></div></details>`).join('')||'<div class="notice">No messages recorded.</div>';}catch(e){$('cmHistory').innerHTML=`<div class="notice">${esc(e.message)}</div>`;}};
- $('cmYear').onchange=async()=>{await loadTerms();await loadClassLearners();};$('cmMessageClass').onchange=loadClassLearners;
+async function renderCommunicationModule(){
+ const box=$('pm24Data');
+ box.classList.add('cm-workspace');
+ box.innerHTML=`
+  <section class="analytics-panel cm-compose-panel" aria-label="Compose parent message">
+   <div class="cm-panel-heading"><h3>Compose message</h3><span class="pill">School SMS</span></div>
+   <p class="muted small">Send a message to a class, learner or guardian. Results publishing is in Examination Control.</p>
+   <div class="cm-context-grid"><label>Academic year<select id="cmYear"></select></label><label>Term<select id="cmTerm"></select></label></div>
+   <div class="cm-recipient-grid">
+    <label>Recipient<select id="cmRecipient"><option value="class">All linked parents in class</option><option value="learner">Parents of one learner</option><option value="parent">One parent / guardian</option></select></label>
+    <label data-cm-target="class">Class<select id="cmMessageClass"></select></label>
+    <label data-cm-target="learner" hidden>Learner<select id="cmLearner"></select></label>
+    <label data-cm-target="parent" hidden>Parent<select id="cmParent"></select></label>
+   </div>
+   <label class="cm-message-field">Message<textarea id="cmMessage" rows="4" placeholder="Type your school message…"></textarea></label>
+   <div class="actions"><button class="btn primary" id="cmSend" type="button">SEND SMS</button></div>
+   <div id="cmSendMsg" class="notice" role="status" aria-live="polite"></div>
+  </section>
+  <section class="analytics-panel cm-history-panel" aria-label="Recent communication history">
+   <div class="cm-panel-heading"><div><h3>Recent communication history</h3><p class="muted small">Open a class to review its recent parent messages.</p></div><button class="btn secondary" id="cmRefreshHistory" type="button">Refresh</button></div>
+   <div id="cmHistory" aria-live="polite">Loading…</div>
+  </section>`;
+ opts($('cmYear'),state.years,x=>x.year_label,'Select academic year');
+ opts($('cmMessageClass'),state.classes,x=>`${x.name} ${x.stream||''}`,'Select class');
+ opts($('cmLearner'),[],x=>`${x.first_name||''} ${x.last_name||''}`,'Select learner');
+ if(state.years.length)$('cmYear').value=state.academicPeriod?.yearId||state.years[0].id;
+
+ const loadTerms=async()=>{
+  const yearId=$('cmYear').value;
+  if(!yearId){opts($('cmTerm'),[],()=>{},'Select term');return;}
+  await terms(yearId,$('cmTerm'));
+ };
+ const loadParents=async()=>{
+  try{
+   const parents=await api(`/api/communications/${sid}/parents`);
+   opts($('cmParent'),parents,x=>`${x.first_name||''} ${x.last_name||''} · ${x.phone||'No phone'} · ${x.sms_enabled?'SMS ON':'SMS OFF'} · ${x.communication_consent?'Consent ON':'Consent OFF'}`,'Select parent / guardian');
+  }catch(e){opts($('cmParent'),[],()=>{},'Unable to load parents');}
+ };
+ const loadClassLearners=async()=>{
+  const classId=$('cmMessageClass').value,yearId=$('cmYear').value,termId=$('cmTerm').value;
+  if(!classId||!yearId||!termId){opts($('cmLearner'),[],()=>{},'Select class and term first');return;}
+  try{
+   const learners=await api(`/api/reports/${sid}/class/${classId}/${yearId}/${termId}/learners`);
+   opts($('cmLearner'),learners,x=>`${x.first_name||''} ${x.last_name||''} · ${x.admission_no||''}`,'Select learner');
+  }catch(e){
+   opts($('cmLearner'),state.learners.filter(x=>String(x.class_id)===String(classId)),x=>`${x.first_name||''} ${x.last_name||''} · ${x.admission_no||''}`,'Select learner');
+  }
+ };
+ const loadHistory=async()=>{
+  try{
+   const history=await api(`/api/communications/${sid}/history`),groups=new Map();
+   history.slice(0,100).forEach(message=>{
+    const key=message.class_id||'unassigned';
+    if(!groups.has(key))groups.set(key,{label:message.class_name?`${message.class_name}${message.stream?' · '+message.stream:''}`:'Other / individual messages',rows:[]});
+    groups.get(key).rows.push(message);
+   });
+   $('cmHistory').innerHTML=[...groups.values()].map(group=>`<details class="record-class-group"><summary>${esc(group.label)}<span>${group.rows.length} message(s)</span></summary><div class="table-wrap"><table><thead><tr><th>Date</th><th>Parent</th><th>Type</th><th>Status</th><th>Message</th></tr></thead><tbody>${group.rows.map(message=>`<tr><td>${esc(new Date(message.created_at).toLocaleString())}</td><td>${esc((message.parent_first_name||'')+' '+(message.parent_last_name||''))}<br>${esc(message.phone||'')}</td><td>${esc(message.message_type)}</td><td>${esc(message.status)}</td><td>${esc(message.body)}</td></tr>`).join('')}</tbody></table></div></details>`).join('')||'<div class="notice">No messages recorded.</div>';
+  }catch(e){$('cmHistory').innerHTML=`<div class="notice" role="alert">${esc(e.message)}</div>`;}
+ };
+ const updateRecipientFields=async()=>{
+  const recipient=$('cmRecipient').value;
+  document.querySelectorAll('#pm24Data [data-cm-target]').forEach(label=>{label.hidden=label.dataset.cmTarget==='class'?recipient==='parent':label.dataset.cmTarget!==recipient;});
+  $('cmMessageClass').disabled=recipient==='parent';
+  $('cmLearner').disabled=recipient!=='learner';
+  $('cmParent').disabled=recipient!=='parent';
+  if(recipient==='learner')await loadClassLearners();
+  if(recipient==='parent')await loadParents();
+ };
+ $('cmYear').onchange=async()=>{await loadTerms();await loadClassLearners();};
+ $('cmMessageClass').onchange=loadClassLearners;
+ $('cmRefreshHistory').onclick=loadHistory;
  $('cmSend').onclick=async()=>{
-  const type=$('cmRecipient').value,msg=$('cmMessage').value.trim(),button=$('cmSend'),status=$('cmSendMsg');
-  if(!msg)return alert('Enter a message.');
-  const body={message:msg,message_type:'SCHOOL_MESSAGE'};
-  if(type==='class'){if(!$('cmMessageClass').value)return alert('Select a class.');body.class_id=$('cmMessageClass').value;}
-  else if(type==='learner'){if(!$('cmLearner').value)return alert('Select a learner.');body.learner_id=$('cmLearner').value;}
+  const recipient=$('cmRecipient').value,message=$('cmMessage').value.trim(),button=$('cmSend'),status=$('cmSendMsg');
+  if(!message)return alert('Enter a message.');
+  const body={message,message_type:'SCHOOL_MESSAGE'};
+  if(recipient==='class'){if(!$('cmMessageClass').value)return alert('Select a class.');body.class_id=$('cmMessageClass').value;}
+  else if(recipient==='learner'){if(!$('cmLearner').value)return alert('Select a learner.');body.learner_id=$('cmLearner').value;}
   else{if(!$('cmParent').value)return alert('Select a parent / guardian.');body.parent_guardian_ids=[$('cmParent').value];}
   setBusy(button,true,'Sending…');status.textContent='Sending SMS…';
   try{
-   const r=await api(`/api/communications/${sid}/send`,{method:'POST',body});
-   status.textContent=`Message processed: ${r.sent||0} sent, ${r.queued||0} queued, ${r.failed||0} failed, ${r.skipped||0} duplicate skipped.`;
+   const result=await api(`/api/communications/${sid}/send`,{method:'POST',body});
+   status.textContent=`Message processed: ${result.sent||0} sent, ${result.queued||0} queued, ${result.failed||0} failed, ${result.skipped||0} duplicate skipped.`;
    $('cmMessage').value='';await loadHistory();
   }catch(e){status.textContent=e.message;}
   finally{setBusy(button,false);}
  };
- $('cmRecipient').onchange=async()=>{const t=$('cmRecipient').value;$('cmMessageClass').disabled=t==='parent';$('cmLearner').disabled=t!=='learner';$('cmParent').disabled=t!=='parent';if(t==='learner')await loadClassLearners();if(t==='parent')await loadParents();};$('cmRecipient').dispatchEvent(new Event('change'));await loadTerms();if(state.academicPeriod?.yearId===$('cmYear').value&&($('cmTerm').options.length>1))$('cmTerm').value=state.academicPeriod.termId;if(!$('cmTerm').value&&$('cmYear').value){const rr=state.terms[$('cmYear').value]||[];if(rr.length)$('cmTerm').value=rr[0].id;}await loadParents();loadHistory();}
+ $('cmRecipient').onchange=updateRecipientFields;
+ await loadTerms();
+ if(state.academicPeriod?.yearId===$('cmYear').value&&$('cmTerm').options.length>1)$('cmTerm').value=state.academicPeriod.termId;
+ if(!$('cmTerm').value&&$('cmYear').value){
+  const periodTerms=state.terms[$('cmYear').value]||[];
+  if(periodTerms.length)$('cmTerm').value=periodTerms[0].id;
+ }
+ await loadParents();
+ await updateRecipientFields();
+ await loadHistory();
+}
 async function renderSchoolFinanceModule(){
  const box=$('pm24Data');
  box.innerHTML=`<div class="analytics-panel"><div class="section-title"><div><h3>SCHOOL FEES & RECEIPTS</h3><p class="muted small">Create fee structures, assign class fees to active learners, record payments and issue receipts. This is separate from platform subscription billing.</p></div><span class="pill">KES · School Finance</span></div><div id="sfSummary" class="analytics-kpis"><div class="notice">Loading finance records…</div></div><div id="sfRefreshStatus" class="muted small" role="status" aria-live="polite"></div>
@@ -2811,12 +2909,13 @@ async function openPM24(n){
  if(n===12){showSection('resultsCentre');if(window.ZRC)window.ZRC.open('merit');return;}
 
  const m=PM24[n];if(!m)return;
- const panel=$('pm24_workspace'),navCard=$('navTabs')?.closest('.pm-workflow-intro');
+ const panel=$('pm24_workspace'),isCommunication=n===15;
+ panel?.classList.toggle('pm24-communication-active',isCommunication);
  // Keep the module workspace in the central display, never inside the sidebar.
  if(panel)window.zelimuMountWorkspace?.(panel);
  showSection('pm24_workspace');$('pm24Title').textContent=m[0];$('pm24Pill').textContent=m[1];
- const box=$('pm24Content');box.innerHTML=`<div class="analytics-panel"><h3>${esc(m[0])}</h3><p class="muted">${esc(m[1])}. This workspace is connected to persistent school records.</p><div class="actions"><button class="btn" id="pm24Refresh">Refresh live data</button>${m[2]&&m[2]!=='owner'&&!PM24DATA[n]?`<button class="btn secondary" id="pm24Detail">Open detailed existing workspace</button>`:''}</div></div><div id="pm24Data" class="analytics-dashboard"><div class="notice">Loading…</div></div>`;
- $('pm24Refresh').onclick=()=>openPM24(n);
+ const box=$('pm24Content');box.innerHTML=`${isCommunication?'':`<div class="analytics-panel"><h3>${esc(m[0])}</h3><p class="muted">${esc(m[1])}. This workspace is connected to persistent school records.</p><div class="actions"><button class="btn" id="pm24Refresh">Refresh live data</button>${m[2]&&m[2]!=='owner'&&!PM24DATA[n]?`<button class="btn secondary" id="pm24Detail">Open detailed existing workspace</button>`:''}</div></div>`}<div id="pm24Data" class="analytics-dashboard"><div class="notice">Loading…</div></div>`;
+ const refresh=$('pm24Refresh');if(refresh)refresh.onclick=()=>openPM24(n);
  if($('pm24Detail'))$('pm24Detail').onclick=()=>showSection(m[2]);
  if(n===25){ return renderQuickResourceWorkspace(); }
  if(n===26){ return renderQuickClassListWorkspace(); }
