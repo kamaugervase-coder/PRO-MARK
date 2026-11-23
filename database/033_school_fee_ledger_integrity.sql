@@ -48,25 +48,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS school_fee_charges_school_id_id_unique
 CREATE UNIQUE INDEX IF NOT EXISTS school_fee_payments_school_id_id_unique
   ON school_fee_payments(school_id,id);
 
-ALTER TABLE school_fee_structures
-  ADD CONSTRAINT school_fee_structures_class_school_fk
-  FOREIGN KEY(school_id,class_id) REFERENCES classes(school_id,id);
-ALTER TABLE school_fee_charges
-  ADD CONSTRAINT school_fee_charges_learner_school_fk
-  FOREIGN KEY(school_id,learner_id) REFERENCES learners(school_id,id),
-  ADD CONSTRAINT school_fee_charges_structure_school_fk
-  FOREIGN KEY(school_id,fee_structure_id) REFERENCES school_fee_structures(school_id,id);
-ALTER TABLE school_fee_payments
-  ADD CONSTRAINT school_fee_payments_learner_school_fk
-  FOREIGN KEY(school_id,learner_id) REFERENCES learners(school_id,id);
-ALTER TABLE school_fee_payment_allocations
-  ADD CONSTRAINT school_fee_allocations_payment_school_fk
-  FOREIGN KEY(school_id,payment_id) REFERENCES school_fee_payments(school_id,id) ON DELETE CASCADE,
-  ADD CONSTRAINT school_fee_allocations_charge_school_fk
-  FOREIGN KEY(school_id,charge_id) REFERENCES school_fee_charges(school_id,id);
-ALTER TABLE school_fee_payment_reversals
-  ADD CONSTRAINT school_fee_reversals_payment_school_fk
-  FOREIGN KEY(school_id,payment_id) REFERENCES school_fee_payments(school_id,id) ON DELETE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_structures'::regclass AND conname='school_fee_structures_class_school_fk') THEN
+    ALTER TABLE school_fee_structures
+      ADD CONSTRAINT school_fee_structures_class_school_fk
+      FOREIGN KEY(school_id,class_id) REFERENCES classes(school_id,id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_charges'::regclass AND conname='school_fee_charges_learner_school_fk') THEN
+    ALTER TABLE school_fee_charges
+      ADD CONSTRAINT school_fee_charges_learner_school_fk
+      FOREIGN KEY(school_id,learner_id) REFERENCES learners(school_id,id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_charges'::regclass AND conname='school_fee_charges_structure_school_fk') THEN
+    ALTER TABLE school_fee_charges
+      ADD CONSTRAINT school_fee_charges_structure_school_fk
+      FOREIGN KEY(school_id,fee_structure_id) REFERENCES school_fee_structures(school_id,id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_payments'::regclass AND conname='school_fee_payments_learner_school_fk') THEN
+    ALTER TABLE school_fee_payments
+      ADD CONSTRAINT school_fee_payments_learner_school_fk
+      FOREIGN KEY(school_id,learner_id) REFERENCES learners(school_id,id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_payment_allocations'::regclass AND conname='school_fee_allocations_payment_school_fk') THEN
+    ALTER TABLE school_fee_payment_allocations
+      ADD CONSTRAINT school_fee_allocations_payment_school_fk
+      FOREIGN KEY(school_id,payment_id) REFERENCES school_fee_payments(school_id,id) ON DELETE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_payment_allocations'::regclass AND conname='school_fee_allocations_charge_school_fk') THEN
+    ALTER TABLE school_fee_payment_allocations
+      ADD CONSTRAINT school_fee_allocations_charge_school_fk
+      FOREIGN KEY(school_id,charge_id) REFERENCES school_fee_charges(school_id,id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='school_fee_payment_reversals'::regclass AND conname='school_fee_reversals_payment_school_fk') THEN
+    ALTER TABLE school_fee_payment_reversals
+      ADD CONSTRAINT school_fee_reversals_payment_school_fk
+      FOREIGN KEY(school_id,payment_id) REFERENCES school_fee_payments(school_id,id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 WITH payment_totals AS (
   SELECT p.id payment_id,p.school_id,p.learner_id,p.payment_date,p.created_at,
