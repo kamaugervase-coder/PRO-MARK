@@ -1263,3 +1263,4 @@ router.get('/:schoolId/sms-balance',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN')
 module.exports=router;
 module.exports.buildPublicationSummary=buildPublicationSummary;
 module.exports.areAssessmentGroupCompatible=areAssessmentGroupCompatible;
+module.exports.deliverSms=deliverSms;

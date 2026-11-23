@@ -4,6 +4,8 @@ const db=require('../db');
 const {authenticate,roles,schoolBoundary}=require('../middleware/auth');
 const {allocateAvailablePayments,money}=require('../services/school-finance-ledger');
 const {validateExpenseInput,assertTransition}=require('../services/school-finance-expenses');
+const {deliverSms}=require('./communications');
+const {notifyPaymentGuardians:notifySavedPaymentGuardians}=require('../services/school-finance-notifications');
 const router=express.Router();
 router.use(authenticate);
 const FINANCE_ROLES=['SCHOOL_ADMIN','ADMIN'];
@@ -23,13 +25,13 @@ const validMoney=value=>
  Number.isFinite(Number(value)) &&
  Number(value)>0 &&
  Math.round(Number(value)*100)/100===Number(value);
-
+const validApplicability=value=>['ALL','DAY','BOARDING'].includes(String(value).toUpperCase());
 
 router.get('/:schoolId/overview',schoolBoundary,roles(...FINANCE_READ),async(req,res)=>{
  try{
   const sid=req.params.schoolId;
   const [structures,learners,charges,payments,summary,balances]=await Promise.all([
-   db.query(`SELECT fs.*,ay.year_label,c.name class_name,c.stream FROM school_fee_structures fs LEFT JOIN academic_years ay ON ay.id=fs.academic_year_id LEFT JOIN classes c ON c.id=fs.class_id WHERE fs.school_id=$1 ORDER BY fs.is_active DESC,fs.created_at DESC`,[sid]),
+   db.query(`SELECT fs.*,ay.year_label,t.name term_name,c.name class_name,c.stream FROM school_fee_structures fs LEFT JOIN academic_years ay ON ay.id=fs.academic_year_id LEFT JOIN terms t ON t.id=fs.term_id LEFT JOIN classes c ON c.id=fs.class_id WHERE fs.school_id=$1 ORDER BY fs.is_active DESC,fs.created_at DESC`,[sid]),
    db.query(`SELECT l.id,l.admission_no,l.first_name,l.middle_name,l.last_name,l.class_id,c.name class_name,c.stream FROM learners l LEFT JOIN classes c ON c.id=l.class_id WHERE l.school_id=$1 AND COALESCE(l.is_active,true)=true ORDER BY c.name,c.stream,l.last_name,l.first_name`,[sid]),
    db.query(`SELECT ch.id,ch.learner_id,ch.description,ch.amount,ch.due_on,ch.created_at,l.admission_no,l.first_name,l.middle_name,l.last_name,l.class_id,c.name class_name,c.stream,COALESCE(a.allocated,0) amount_paid FROM school_fee_charges ch JOIN learners l ON l.id=ch.learner_id LEFT JOIN classes c ON c.id=l.class_id LEFT JOIN (SELECT a.charge_id,sum(a.amount) allocated FROM school_fee_payment_allocations a JOIN school_fee_payments p ON p.id=a.payment_id AND p.status='CONFIRMED' AND NOT EXISTS(SELECT 1 FROM school_fee_payment_reversals r WHERE r.school_id=p.school_id AND r.payment_id=p.id) WHERE a.school_id=$1 GROUP BY a.charge_id) a ON a.charge_id=ch.id WHERE ch.school_id=$1 ORDER BY ch.due_on NULLS LAST,ch.created_at DESC LIMIT 500`,[sid]),
    db.query(`SELECT p.*,l.admission_no,l.first_name,l.middle_name,l.last_name,l.class_id,c.name class_name,c.stream,r.credit_note_no,r.reason reversal_reason,r.created_at reversed_at,(r.id IS NOT NULL) reversed FROM school_fee_payments p JOIN learners l ON l.id=p.learner_id LEFT JOIN classes c ON c.id=l.class_id LEFT JOIN school_fee_payment_reversals r ON r.school_id=p.school_id AND r.payment_id=p.id WHERE p.school_id=$1 ORDER BY p.payment_date DESC,p.created_at DESC LIMIT 100`,[sid]),
@@ -61,11 +63,17 @@ router.post('/:schoolId/structures',schoolBoundary,roles(...FINANCE_ACCESS),asyn
     return res.status(400).json({error:'Invalid fee due date.'});
   const currency=String(b.currency||'KES').trim().toUpperCase();if(currency!=='KES')return res.status(400).json({error:'This first school-finance release supports KES only so payments cannot be allocated across different currencies.'});
   if(b.academic_year_id){const q=await db.query('SELECT 1 FROM academic_years WHERE id=$1 AND school_id=$2',[b.academic_year_id,sid]);if(!q.rowCount)return res.status(400).json({error:'Academic year does not belong to this school.'});}
+  if(b.term_id){const q=await db.query('SELECT 1 FROM terms WHERE id=$1 AND school_id=$2 AND ($3::uuid IS NULL OR academic_year_id=$3)',[b.term_id,sid,b.academic_year_id||null]);if(!q.rowCount)return res.status(400).json({error:'Term does not belong to this school and academic year.'});}
   if(b.class_id){const q=await db.query('SELECT 1 FROM classes WHERE id=$1 AND school_id=$2',[b.class_id,sid]);if(!q.rowCount)return res.status(400).json({error:'Class does not belong to this school.'});}
+  const learnerCategory=String(b.learner_category||'').trim().slice(0,100);
+  const feeCategory=String(b.fee_category||'').trim().slice(0,100);
+  const applicability=String(b.applicability||'ALL').toUpperCase();
+  if(!validApplicability(applicability)||(b.is_compulsory!==undefined&&typeof b.is_compulsory!=='boolean'))return res.status(400).json({error:'Choose a valid learner applicability and compulsory status.'});
+  const compulsory=b.is_compulsory!==false;
   c=await db.pool.connect();
   await c.query('BEGIN');
-  const q=await c.query(`INSERT INTO school_fee_structures(school_id,name,academic_year_id,class_id,amount,currency,due_on,print_notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[sid,name,b.academic_year_id||null,b.class_id||null,money(amount),currency,b.due_on||null,printNotes,req.user.user_id]);
-  await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_STRUCTURE_CREATED','school_fee_structure',$3,$4::jsonb)`,[sid,req.user.user_id,q.rows[0].id,JSON.stringify({name,amount,currency,class_id:b.class_id||null,academic_year_id:b.academic_year_id||null,print_notes:printNotes})]);
+  const q=await c.query(`INSERT INTO school_fee_structures(school_id,name,academic_year_id,term_id,class_id,amount,currency,due_on,print_notes,learner_category,fee_category,is_compulsory,applicability,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[sid,name,b.academic_year_id||null,b.term_id||null,b.class_id||null,money(amount),currency,b.due_on||null,printNotes,learnerCategory,feeCategory,compulsory,applicability,req.user.user_id]);
+  await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_STRUCTURE_CREATED','school_fee_structure',$3,$4::jsonb)`,[sid,req.user.user_id,q.rows[0].id,JSON.stringify({name,amount,currency,class_id:b.class_id||null,academic_year_id:b.academic_year_id||null,term_id:b.term_id||null,learner_category:learnerCategory,fee_category:feeCategory,is_compulsory:compulsory,applicability,print_notes:printNotes})]);
   await c.query('COMMIT');
   res.status(201).json(q.rows[0]);
  }catch(e){if(c)await c.query('ROLLBACK').catch(()=>{});console.error('Create fee structure failed:',e);res.status(500).json({error:'Could not create fee structure. Ensure migrations 028_school_finance_core.sql, 033_school_fee_ledger_integrity.sql, and 034_school_fee_structure_print_notes.sql have been applied.'});}
@@ -88,17 +96,22 @@ router.patch('/:schoolId/structures/:structureId',schoolBoundary,roles(...FINANC
   const amount=b.amount===undefined?Number(current.amount):Number(b.amount);
   const dueOn=b.due_on===undefined?current.due_on:b.due_on;
   const printNotes=b.print_notes===undefined?current.print_notes:String(b.print_notes);
-  if(!name||name.length>120||!validMoney(amount)||!validDate(dueOn)){
+  const learnerCategory=b.learner_category===undefined?current.learner_category:String(b.learner_category||'').trim().slice(0,100);
+  const feeCategory=b.fee_category===undefined?current.fee_category:String(b.fee_category||'').trim().slice(0,100);
+  const compulsory=b.is_compulsory===undefined?current.is_compulsory:b.is_compulsory!==false;
+  const applicability=b.applicability===undefined?current.applicability:String(b.applicability||'').toUpperCase();
+  if(!name||name.length>120||!validMoney(amount)||!validDate(dueOn)||!validApplicability(applicability)||(b.is_compulsory!==undefined&&typeof b.is_compulsory!=='boolean')){
    await c.query('ROLLBACK');
    return res.status(400).json({error:'Provide a fee name, a valid amount greater than zero, and a valid due date.'});
   }
   const updated=(await c.query(`
    UPDATE school_fee_structures
-   SET name=$3,amount=$4,due_on=$5,print_notes=$6,is_active=COALESCE($7,is_active),updated_at=now()
+   SET name=$3,amount=$4,due_on=$5,print_notes=$6,is_active=COALESCE($7,is_active),
+       learner_category=$8,fee_category=$9,is_compulsory=$10,applicability=$11,updated_at=now()
    WHERE id=$1 AND school_id=$2
    RETURNING *
-  `,[current.id,sid,name,money(amount),dueOn||null,printNotes,b.is_active??null])).rows[0];
-  await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_STRUCTURE_UPDATED','school_fee_structure',$3,$4::jsonb)`,[sid,req.user.user_id,current.id,JSON.stringify({name,amount:money(amount),due_on:dueOn||null,print_notes:printNotes,is_active:updated.is_active})]);
+  `,[current.id,sid,name,money(amount),dueOn||null,printNotes,b.is_active??null,learnerCategory,feeCategory,compulsory,applicability])).rows[0];
+  await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_STRUCTURE_UPDATED','school_fee_structure',$3,$4::jsonb)`,[sid,req.user.user_id,current.id,JSON.stringify({name,amount:money(amount),due_on:dueOn||null,print_notes:printNotes,is_active:updated.is_active,learner_category:learnerCategory,fee_category:feeCategory,is_compulsory:compulsory,applicability})]);
   await c.query('COMMIT');
   res.json(updated);
  }catch(e){if(c)await c.query('ROLLBACK').catch(()=>{});console.error('Update fee structure failed:',e);res.status(500).json({error:'Could not update fee structure. Ensure migration 034_school_fee_structure_print_notes.sql has been applied.'});}
@@ -138,12 +151,12 @@ router.post('/:schoolId/structures/:structureId/assign',schoolBoundary,roles(...
   if(!f.class_id)throw Object.assign(new Error('Choose a class on this fee structure before assigning it to learners.'),{status:400});
   const learners=(await c.query(`SELECT id FROM learners WHERE school_id=$1 AND class_id=$2 AND COALESCE(is_active,true)=true ORDER BY admission_no FOR UPDATE`,[sid,f.class_id])).rows;
   const inserted=await c.query(`
-   INSERT INTO school_fee_charges(school_id,learner_id,fee_structure_id,description,amount,due_on,academic_year_id,created_by)
-   SELECT $1,l.id,$3,$4,$5,$6,$7,$8 FROM learners l
+   INSERT INTO school_fee_charges(school_id,learner_id,fee_structure_id,description,amount,due_on,academic_year_id,term_id,created_by)
+   SELECT $1,l.id,$3,$4,$5,$6,$7,$8,$9 FROM learners l
    WHERE l.school_id=$1 AND l.class_id=$2 AND COALESCE(l.is_active,true)=true
    ON CONFLICT(school_id,learner_id,fee_structure_id) DO NOTHING
    RETURNING learner_id
-  `,[sid,f.class_id,f.id,f.name,f.amount,f.due_on,f.academic_year_id,req.user.user_id]);
+  `,[sid,f.class_id,f.id,f.name,f.amount,f.due_on,f.academic_year_id,f.term_id,req.user.user_id]);
   const creditLearners=(await c.query(`
    SELECT DISTINCT p.learner_id
    FROM school_fee_payments p
@@ -177,13 +190,65 @@ router.post('/:schoolId/payments',schoolBoundary,roles(...FINANCE_ACCESS),async(
    const duplicate=(await c.query(`SELECT receipt_no FROM school_fee_payments WHERE school_id=$1 AND lower(btrim(reference))=$2 LIMIT 1`,[sid,fingerprint])).rows[0];
    if(duplicate)throw Object.assign(new Error(`Payment reference has already been used on receipt ${duplicate.receipt_no}.`),{status:409});
   }
-  const payment=(await c.query(`INSERT INTO school_fee_payments(school_id,learner_id,receipt_no,amount,currency,payment_method,reference,reference_fingerprint,payment_date,notes,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),COALESCE($9::date,CURRENT_DATE),$10,$11) RETURNING *`,[sid,b.learner_id,receipt,money(amount),currency,method,reference,fingerprint,b.payment_date||null,String(b.notes||'').slice(0,500),req.user.user_id])).rows[0];
+  const payerName=String(b.payer_name||'').trim().slice(0,200);
+  const payerRelationship=String(b.payer_relationship||'').trim().slice(0,100);
+  const academicYearId=b.academic_year_id||null;
+  const termId=b.term_id||null;
+  if(academicYearId){const q=await c.query('SELECT 1 FROM academic_years WHERE id=$1 AND school_id=$2',[academicYearId,sid]);if(!q.rowCount)throw Object.assign(new Error('Academic year does not belong to this school.'),{status:400});}
+  if(termId){const q=await c.query('SELECT 1 FROM terms WHERE id=$1 AND school_id=$2 AND ($3::uuid IS NULL OR academic_year_id=$3)',[termId,sid,academicYearId]);if(!q.rowCount)throw Object.assign(new Error('Term does not belong to this school and academic year.'),{status:400});}
+  const payment=(await c.query(`INSERT INTO school_fee_payments(school_id,learner_id,receipt_no,amount,currency,payment_method,reference,reference_fingerprint,payment_date,notes,payer_name,payer_relationship,academic_year_id,term_id,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),COALESCE($9::date,CURRENT_DATE),$10,$11,$12,$13,$14,$15) RETURNING *`,[sid,b.learner_id,receipt,money(amount),currency,method,reference,fingerprint,b.payment_date||null,String(b.notes||'').slice(0,500),payerName,payerRelationship,academicYearId,termId,req.user.user_id])).rows[0];
   await allocateAvailablePayments(c,sid,b.learner_id);
   const paymentAllocation=money((await c.query(`SELECT COALESCE(sum(amount),0) allocated FROM school_fee_payment_allocations WHERE school_id=$1 AND payment_id=$2`,[sid,payment.id])).rows[0].allocated);
   const unallocated=money(Number(payment.amount)-paymentAllocation);
-  await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_PAYMENT_RECORDED','school_fee_payment',$3,$4::jsonb)`,[sid,req.user.user_id,payment.id,JSON.stringify({receipt_no:receipt,amount:money(amount),currency,learner_id:b.learner_id,allocated:paymentAllocation,unallocated,reference_fingerprint:reference?fingerprint:null})]);
-  await c.query('COMMIT');res.status(201).json({payment,allocated:paymentAllocation,unallocated});
+  await c.query(`INSERT INTO audit_log(school_id,user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SCHOOL_FEE_PAYMENT_RECORDED','school_fee_payment',$3,$4::jsonb)`,[sid,req.user.user_id,payment.id,JSON.stringify({receipt_no:receipt,amount:money(amount),currency,learner_id:b.learner_id,payer_name:payerName,payer_relationship:payerRelationship,academic_year_id:academicYearId,term_id:termId,allocated:paymentAllocation,unallocated,reference_fingerprint:reference?fingerprint:null})]);
+  await c.query('COMMIT');
+  let notifications;
+  try{notifications=await notifySavedPaymentGuardians({db,deliverSms,schoolId:sid,payment,actorId:req.user.user_id});}
+  catch(error){
+   console.error('Payment was saved, but guardian receipt notification could not be prepared:',error);
+   notifications={sent:0,queued:0,failed:1,skipped:0,error:'Payment saved, but guardian receipt and statement notifications could not be prepared.'};
+  }
+  res.status(201).json({payment,allocated:paymentAllocation,unallocated,notifications});
  }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||400).json({error:e.message||'Unable to record payment.'});}finally{c.release();}
+});
+
+router.get('/:schoolId/adjustments',schoolBoundary,roles(...FINANCE_READ),async(req,res)=>{
+ try{
+  const rows=await db.query(`SELECT a.*,l.admission_no,l.first_name,l.middle_name,l.last_name,
+    ay.year_label,t.name term_name,u.first_name recorder_first_name,u.last_name recorder_last_name
+    FROM school_finance_adjustments a
+    JOIN learners l ON l.id=a.learner_id AND l.school_id=a.school_id
+    LEFT JOIN academic_years ay ON ay.id=a.academic_year_id
+    LEFT JOIN terms t ON t.id=a.term_id
+    LEFT JOIN users u ON u.id=a.recorded_by
+    WHERE a.school_id=$1 ORDER BY a.created_at DESC LIMIT 500`,[req.params.schoolId]);
+  res.json(rows.rows);
+ }catch(e){res.status(503).json({error:'Apply database migration 049_finance_document_enrichment.sql before using financial adjustments.'});}
+});
+
+router.post('/:schoolId/adjustments',schoolBoundary,roles(...FINANCE_ACCESS),async(req,res)=>{
+ const sid=req.params.schoolId,b=req.body||{},c=await db.pool.connect();
+ try{
+  const learnerId=String(b.learner_id||''),amount=Number(b.amount);
+  const type=['OPENING_BALANCE','BURSARY','DISCOUNT','ADJUSTMENT'].includes(String(b.adjustment_type||'').toUpperCase())?String(b.adjustment_type).toUpperCase():'ADJUSTMENT';
+  const direction=['DEBIT','CREDIT'].includes(String(b.direction||'').toUpperCase())?String(b.direction).toUpperCase():null;
+  const reason=String(b.reason||'').trim();
+  if(!UUID.test(learnerId)||!direction||!validMoney(amount)||reason.length<4||reason.length>500)
+   throw Object.assign(new Error('Learner, direction, amount and a reason of 4-500 characters are required.'),{status:400});
+  await c.query('BEGIN');
+  const learner=(await c.query('SELECT id FROM learners WHERE id=$1 AND school_id=$2',[learnerId,sid])).rows[0];
+  if(!learner)throw Object.assign(new Error('Learner does not belong to this school.'),{status:404});
+  if(b.academic_year_id){const q=await c.query('SELECT 1 FROM academic_years WHERE id=$1 AND school_id=$2',[b.academic_year_id,sid]);if(!q.rowCount)throw Object.assign(new Error('Academic year does not belong to this school.'),{status:400});}
+  if(b.term_id){const q=await c.query('SELECT 1 FROM terms WHERE id=$1 AND school_id=$2 AND ($3::uuid IS NULL OR academic_year_id=$3)',[b.term_id,sid,b.academic_year_id||null]);if(!q.rowCount)throw Object.assign(new Error('Term does not belong to this school and academic year.'),{status:400});}
+  const row=(await c.query(`INSERT INTO school_finance_adjustments(school_id,learner_id,academic_year_id,term_id,adjustment_type,direction,amount,reason,status,recorded_by,approved_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,'APPROVED',$9,$9) RETURNING *`,
+   [sid,learnerId,b.academic_year_id||null,b.term_id||null,type,direction,money(amount),reason,req.user.user_id])).rows[0];
+  await c.query(`INSERT INTO school_finance_audit_events(school_id,actor_id,entity_type,entity_id,action,new_values)
+    VALUES($1,$2,'FINANCIAL_ADJUSTMENT',$3,'APPROVED',$4::jsonb)`,
+   [sid,req.user.user_id,row.id,JSON.stringify(row)]);
+  await c.query('COMMIT');res.status(201).json(row);
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});res.status(e.status||400).json({error:e.message||'Unable to record financial adjustment.'});}
+ finally{c.release();}
 });
 
 router.post('/:schoolId/payments/:paymentId/reversals',schoolBoundary,roles(...FINANCE_ACCESS),async(req,res)=>{
