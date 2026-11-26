@@ -246,9 +246,85 @@ router.post('/:schoolId/link',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN','CLASS
  }catch(e){res.status(400).json({error:e.message});}
 });
 router.get('/:schoolId/learner/:learnerId/parents',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN','HEADTEACHER','DEPUTY_HEADTEACHER','SENIOR_TEACHER','CLASS_TEACHER','TEACHER'),async(req,res)=>{try{const q=await db.query(`SELECT pg.*,lg.is_primary FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id WHERE pg.school_id=$1 AND lg.learner_id=$2 ORDER BY lg.is_primary DESC,pg.last_name`,[req.params.schoolId,req.params.learnerId]);res.json(q.rows)}catch(e){res.status(500).json({error:'Unable to load learner parents'})}});
-router.post('/:schoolId/send',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{try{const b=req.body,sid=req.params.schoolId;let guardians=[],classId=b.class_id||null;if(b.class_id){const classExists=await db.query('SELECT id FROM classes WHERE id=$1 AND school_id=$2',[b.class_id,sid]);if(!classExists.rowCount)return res.status(400).json({error:'Class does not belong to this school.'});guardians=(await db.query(`SELECT DISTINCT pg.id,pg.phone FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id JOIN learner_enrollments le ON le.learner_id=lg.learner_id AND le.school_id=pg.school_id WHERE pg.school_id=$1 AND le.class_id=$2 AND pg.is_active AND pg.sms_enabled AND pg.communication_consent`,[sid,b.class_id])).rows;}else if(b.learner_id){const learner=(await db.query('SELECT class_id FROM learners WHERE id=$1 AND school_id=$2',[b.learner_id,sid])).rows[0];if(!learner)return res.status(400).json({error:'Learner does not belong to this school.'});classId=learner.class_id||null;guardians=(await db.query(`SELECT pg.id,pg.phone FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id WHERE pg.school_id=$1 AND lg.learner_id=$2 AND pg.is_active AND pg.sms_enabled AND pg.communication_consent`,[sid,b.learner_id])).rows;}else if(b.parent_guardian_ids?.length){guardians=(await db.query(`SELECT id,phone FROM parent_guardians WHERE school_id=$1 AND id=ANY($2::uuid[]) AND is_active AND sms_enabled AND communication_consent`,[sid,b.parent_guardian_ids])).rows;}else return res.status(400).json({error:'Select a class, learner or parent recipient'});const body=String(b.message||'').trim();if(!body)return res.status(400).json({error:'Message is required'});const out=[];for(const g of guardians){const duplicate=await db.query(`SELECT id FROM communication_messages WHERE school_id=$1 AND parent_guardian_id=$2 AND COALESCE(learner_id,'00000000-0000-0000-0000-000000000000')=COALESCE($3::uuid,'00000000-0000-0000-0000-000000000000') AND message_type=$4 AND body=$5 AND created_at>now()-interval '10 minutes' AND class_id IS NOT DISTINCT FROM $6::uuid LIMIT 1`,[sid,g.id,b.learner_id||null,b.message_type||'SCHOOL_MESSAGE',body,classId]);if(duplicate.rows[0]){out.push({status:'SKIPPED_DUPLICATE',parent_guardian_id:g.id});continue;}let status='QUEUED',provider=process.env.SMS_PROVIDER||'UNCONFIGURED',failure=null;try{const d=await deliverSms({phone:g.phone,message:body,school_id:sid,learner_id:b.learner_id||null});status=d.status;provider=d.provider||provider;}catch(e){status='FAILED';failure=e.message;}const q=await db.query(`INSERT INTO communication_messages(school_id,learner_id,parent_guardian_id,class_id,channel,message_type,body,status,provider,error_message,created_by) VALUES($1,$2,$3,$4,'SMS',$5,$6,$7,$8,$9,$10) RETURNING *`,[sid,b.learner_id||null,g.id,classId,b.message_type||'SCHOOL_MESSAGE',body,status,provider,failure,req.user.user_id]);out.push(q.rows[0]);}res.status(201).json({queued:out.filter(x=>x.status==='QUEUED').length,sent:out.filter(x=>x.status==='SENT').length,failed:out.filter(x=>x.status==='FAILED').length,messages:out,notice:process.env.SMS_PROVIDER?'SMS processed through the configured provider.':'Queued locally; configure an SMS provider before production sending.'})}catch(e){if(e.code==='42703')return res.status(503).json({error:'Apply database migration 048_communication_class_history.sql before using class-based communication history.'});res.status(400).json({error:e.message})}});
+router.post('/:schoolId/send',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{
+ try{
+  const b=req.body||{},sid=req.params.schoolId;
+  const manualRecipient=b.recipient_phone!==undefined;
+  const recipientPhone=manualRecipient?normalizePublicationRecipientPhone(b.recipient_phone):null;
+  if(manualRecipient&&!recipientPhone)
+   return res.status(400).json({error:'Enter a valid phone number, such as 0712345678 or +254712345678.'});
+  if(manualRecipient&&b.consent_confirmed!==true)
+   return res.status(400).json({error:'Confirm that this recipient has agreed to receive SMS messages.'});
+  let guardians=[],classId=b.class_id||null;
+  if(manualRecipient){
+   classId=null;
+   guardians=[{id:null,phone:recipientPhone}];
+  }else if(b.class_id){
+   const classExists=await db.query('SELECT id FROM classes WHERE id=$1 AND school_id=$2',[b.class_id,sid]);
+   if(!classExists.rowCount)return res.status(400).json({error:'Class does not belong to this school.'});
+   guardians=(await db.query(`SELECT DISTINCT pg.id,pg.phone FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id JOIN learner_enrollments le ON le.learner_id=lg.learner_id AND le.school_id=pg.school_id WHERE pg.school_id=$1 AND le.class_id=$2 AND pg.is_active AND pg.sms_enabled AND pg.communication_consent`,[sid,b.class_id])).rows;
+  }else if(b.learner_id){
+   const learner=(await db.query('SELECT class_id FROM learners WHERE id=$1 AND school_id=$2',[b.learner_id,sid])).rows[0];
+   if(!learner)return res.status(400).json({error:'Learner does not belong to this school.'});
+   classId=learner.class_id||null;
+   guardians=(await db.query(`SELECT pg.id,pg.phone FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id WHERE pg.school_id=$1 AND lg.learner_id=$2 AND pg.is_active AND pg.sms_enabled AND pg.communication_consent`,[sid,b.learner_id])).rows;
+  }else if(b.parent_guardian_ids?.length){
+   guardians=(await db.query(`SELECT id,phone FROM parent_guardians WHERE school_id=$1 AND id=ANY($2::uuid[]) AND is_active AND sms_enabled AND communication_consent`,[sid,b.parent_guardian_ids])).rows;
+  }else return res.status(400).json({error:'Select a class, learner, parent or manual phone recipient'});
+  const body=String(b.message||'').trim();
+  if(!body)return res.status(400).json({error:'Message is required'});
+  const out=[];
+  for(const g of guardians){
+   const duplicate=manualRecipient
+    ?await db.query(`SELECT id FROM communication_messages WHERE school_id=$1 AND recipient_phone=$2 AND parent_guardian_id IS NULL AND learner_id IS NULL AND message_type=$3 AND body=$4 AND created_at>now()-interval '10 minutes' LIMIT 1`,[sid,recipientPhone,b.message_type||'SCHOOL_MESSAGE',body])
+    :await db.query(`SELECT id FROM communication_messages WHERE school_id=$1 AND parent_guardian_id=$2 AND COALESCE(learner_id,'00000000-0000-0000-0000-000000000000')=COALESCE($3::uuid,'00000000-0000-0000-0000-000000000000') AND message_type=$4 AND body=$5 AND created_at>now()-interval '10 minutes' AND class_id IS NOT DISTINCT FROM $6::uuid LIMIT 1`,[sid,g.id,b.learner_id||null,b.message_type||'SCHOOL_MESSAGE',body,classId]);
+   if(duplicate.rows[0]){
+    out.push({status:'SKIPPED_DUPLICATE',parent_guardian_id:g.id,recipient_phone:manualRecipient?recipientPhone:undefined});
+    continue;
+   }
+   let status='QUEUED',provider=process.env.SMS_PROVIDER||'UNCONFIGURED',failure=null;
+   try{
+    const delivery=await deliverSms({phone:g.phone,message:body,school_id:sid,learner_id:manualRecipient?null:b.learner_id||null});
+    status=delivery.status;provider=delivery.provider||provider;
+   }catch(e){status='FAILED';failure=e.message;}
+   const saved=(await db.query(`INSERT INTO communication_messages(school_id,learner_id,parent_guardian_id,class_id,channel,message_type,body,status,provider,error_message,created_by,recipient_phone,recipient_consent_confirmed) VALUES($1,$2,$3,$4,'SMS',$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[sid,manualRecipient?null:b.learner_id||null,g.id,classId,b.message_type||'SCHOOL_MESSAGE',body,status,provider,failure,req.user.user_id,manualRecipient?recipientPhone:null,manualRecipient])).rows[0];
+   out.push(saved);
+  }
+  res.status(201).json({
+   queued:out.filter(x=>x.status==='QUEUED').length,
+   sent:out.filter(x=>x.status==='SENT').length,
+   failed:out.filter(x=>x.status==='FAILED').length,
+   skipped:out.filter(x=>x.status==='SKIPPED_DUPLICATE').length,
+   messages:out,
+   notice:process.env.SMS_PROVIDER?'SMS processed through the configured provider.':'Queued locally; configure an SMS provider before production sending.'
+  });
+ }catch(e){
+  if(e.code==='42703')return res.status(503).json({error:'Apply database migration 048_communication_class_history.sql and tracked migration 001_publication_manual_sms_recipients.sql before using communication history.'});
+  res.status(400).json({error:e.message});
+ }
+});
 router.post('/:schoolId/results-ready',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{try{const b=req.body;if(!b.learner_id||!b.academic_year_id||!b.term_id)return res.status(400).json({error:'Learner, academic year and term are required'});const report=await buildTermReport(req.params.schoolId,b.learner_id,b.academic_year_id,b.term_id);if(!report)return res.status(404).json({error:'Report not found'});const guardians=(await db.query(`SELECT pg.id,pg.phone FROM parent_guardians pg JOIN learner_guardians lg ON lg.parent_guardian_id=pg.id WHERE pg.school_id=$1 AND lg.learner_id=$2 AND pg.is_active AND pg.sms_enabled AND pg.communication_consent`,[req.params.schoolId,b.learner_id])).rows;const body=`${report.school_name}: ${report.learner_name}'s ${report.term_name||'term'} results are ready. Average: ${report.overall_average==null?'—':Number(report.overall_average).toFixed(2)}. Log in to ZELIMU CBC to view the full report.`;const out=[];for(const g of guardians){let status='QUEUED',provider=process.env.SMS_PROVIDER||'UNCONFIGURED',failure=null;try{const d=await deliverSms({phone:g.phone,message:body,school_id:req.params.schoolId,learner_id:b.learner_id});status=d.status;provider=d.provider||provider;}catch(e){status='FAILED';failure=e.message;}const q=await db.query(`INSERT INTO communication_messages(school_id,learner_id,parent_guardian_id,channel,message_type,body,status,provider,error_message,created_by) VALUES($1,$2,$3,'SMS','RESULTS_READY',$4,$5,$6,$7,$8) RETURNING *`,[req.params.schoolId,b.learner_id,g.id,body,status,provider,failure,req.user.user_id]);out.push(q.rows[0]);}res.status(201).json({queued:out.filter(x=>x.status==='QUEUED').length,sent:out.filter(x=>x.status==='SENT').length,failed:out.filter(x=>x.status==='FAILED').length,messages:out,notice:process.env.SMS_PROVIDER?'SMS processed through the configured provider.':'Queued locally; configure an SMS provider before production sending.'})}catch(e){res.status(400).json({error:e.message})}});
 router.get('/:schoolId/history',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN','HEADTEACHER'),async(req,res)=>{try{const q=await db.query(`SELECT cm.*,pg.first_name parent_first_name,pg.last_name parent_last_name,pg.phone,c.name class_name,c.stream FROM communication_messages cm LEFT JOIN parent_guardians pg ON pg.id=cm.parent_guardian_id LEFT JOIN classes c ON c.id=cm.class_id WHERE cm.school_id=$1 ORDER BY cm.created_at DESC LIMIT 200`,[req.params.schoolId]);res.json(q.rows)}catch(e){if(e.code==='42703')return res.status(503).json({error:'Apply database migration 048_communication_class_history.sql before using class-based communication history.'});res.status(500).json({error:'Unable to load communication history'})}});
+router.delete('/:schoolId/history/:messageId',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{
+ let client;
+ try{
+  client=await db.pool.connect();
+  await client.query('BEGIN');
+  const message=(await client.query(
+   'SELECT id,status FROM communication_messages WHERE id=$1 AND school_id=$2 FOR UPDATE',
+   [req.params.messageId,req.params.schoolId]
+  )).rows[0];
+  if(!message)throw Object.assign(new Error('Communication history entry not found.'),{status:404});
+  if(['QUEUED','SENDING'].includes(String(message.status||'').toUpperCase()))
+   throw Object.assign(new Error('Wait for this SMS to finish before permanently deleting its history.'),{status:409});
+  await client.query('DELETE FROM communication_messages WHERE id=$1 AND school_id=$2',[message.id,req.params.schoolId]);
+  await client.query('COMMIT');
+  res.json({ok:true,id:message.id,message:'Communication history entry permanently deleted. Sent SMS cannot be recalled.'});
+ }catch(e){
+  if(client)try{await client.query('ROLLBACK')}catch(rollbackError){console.error('Failed to roll back communication history deletion:',rollbackError);}
+  res.status(e.status||400).json({error:e.message});
+ }finally{client?.release();}
+});
 
 // Grade/class results publication: builds the learner result SMS from the published assessment context.
 router.get('/:schoolId/grade-roster',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{try{const sid=req.params.schoolId,y=req.query.academic_year_id;const q=await db.query(`SELECT lv.id level_id,lv.name level_name,COUNT(DISTINCT l.id)::int learners,COUNT(DISTINCT pg.id)::int parents_with_phone FROM school_levels lv JOIN classes c ON c.school_level_id=lv.id AND c.school_id=lv.school_id LEFT JOIN learner_enrollments e ON e.class_id=c.id AND e.academic_year_id=$2 AND e.school_id=$1 AND COALESCE(e.status,'ACTIVE')='ACTIVE' LEFT JOIN learners l ON l.id=e.learner_id AND l.school_id=$1 LEFT JOIN learner_guardians lg ON lg.learner_id=l.id LEFT JOIN parent_guardians pg ON pg.id=lg.parent_guardian_id AND pg.is_active AND pg.sms_enabled AND pg.communication_consent WHERE lv.school_id=$1 AND lv.is_active GROUP BY lv.id,lv.name ORDER BY lv.sort_order,lv.name`,[sid,y]);res.json(q.rows)}catch(e){res.status(400).json({error:e.message})}});

@@ -436,19 +436,53 @@ body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active
 .cm-context-grid,.cm-recipient-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
 .cm-compose-panel{gap:9px}
 .cm-compose-panel label{display:flex;flex-direction:column;gap:4px;min-width:0;margin:0}
-.cm-compose-panel select,.cm-compose-panel textarea{width:100%;min-width:0}
+.cm-compose-panel select,.cm-compose-panel textarea,.cm-compose-panel input:not([type="checkbox"]){width:100%;min-width:0;box-sizing:border-box}
+.cm-compose-panel .cm-consent-field{flex-direction:row;align-items:flex-start;gap:9px;line-height:1.4}
+.cm-compose-panel .cm-consent-field input{flex:0 0 16px;margin:2px 0 0}
+.cm-compose-panel select,.cm-compose-panel input:not([type="checkbox"]){min-height:42px}
 .cm-compose-panel textarea{resize:vertical;min-height:96px;max-height:190px}
+.cm-compose-panel .actions .btn{min-height:44px}
 .cm-history-panel .cm-panel-heading{flex:0 0 auto}
 #cmHistory{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+#cmHistory table{width:100%;table-layout:fixed}
+#cmHistory th,#cmHistory td{overflow-wrap:anywhere;vertical-align:top}
+#cmHistory .table-wrap{min-width:0}
 #cmHistory .record-class-group{background:#f5fbf7;border-color:#cfe4d6}
 #cmHistory .record-class-group>summary{color:#245b3d}
 #cmHistory .record-class-group>summary span{color:#496d56}
 #cmHistory .record-class-group[open]>summary{background:#e8f6ed;border-bottom-color:#cfe4d6}
 body main.page #zelimuWorkspaceDisplay #pm24Data.cm-workspace table tbody td{background:#f5fbf7!important;color:#244b36!important}
 body main.page #zelimuWorkspaceDisplay #pm24Data.cm-workspace table tbody tr:nth-child(even)>td{background:#eaf6ee!important}
-@media(max-width:900px){body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{height:calc(100dvh - 125px);max-height:calc(100dvh - 125px)}body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Data{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1.15fr) minmax(0,.85fr);overflow:hidden}.cm-compose-panel{overflow-y:auto}.cm-compose-panel textarea{max-height:110px}}
-@media(max-width:760px){body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{height:calc(100dvh - 150px);max-height:calc(100dvh - 150px)}}
-@media(max-width:480px){.cm-context-grid,.cm-recipient-grid{grid-template-columns:minmax(0,1fr);gap:6px}#pm24Data.cm-workspace>.analytics-panel{padding:10px}}
+@media(max-width:1100px){
+ body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}
+ body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Content{display:block!important;flex:none;min-height:0;overflow:visible!important}
+ body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Data{grid-template-columns:minmax(0,1fr);grid-template-rows:none;flex:none;min-height:0;overflow:visible!important}
+ #pm24Data.cm-workspace>.analytics-panel{min-height:0;overflow:visible}
+ #cmHistory{flex:none;max-height:55dvh;overflow:auto}
+ .cm-compose-panel textarea{max-height:180px}
+}
+@media(max-width:900px){
+ #cmHistory .table-wrap{overflow:visible}
+ #cmHistory table,#cmHistory tbody{display:block;min-width:0}
+ #cmHistory thead{display:none}
+ #cmHistory tbody{display:grid;gap:8px}
+ #cmHistory tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:9px;border:1px solid #d5e7db;border-radius:10px}
+ #cmHistory td{display:block;min-width:0;padding:5px;border:0!important;background:transparent!important}
+ #cmHistory td::before{content:attr(data-label);display:block;margin-bottom:3px;color:#62776b;font-size:.72rem;font-weight:700}
+ #cmHistory td[data-label="Message"],#cmHistory td[data-label="Action"]{grid-column:1/-1}
+ #cmHistory td[data-label="Action"] .btn{width:100%;min-height:40px;white-space:normal}
+}
+@media(max-width:700px){
+ body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{padding:10px!important}
+ .cm-context-grid,.cm-recipient-grid{grid-template-columns:minmax(0,1fr);gap:8px}
+ .cm-compose-panel .actions .btn{width:100%}
+ .cm-history-panel .cm-panel-heading{align-items:flex-start}
+}
+@media(max-width:400px){
+ .cm-context-grid{grid-template-columns:minmax(0,1fr)}
+ .cm-panel-heading{align-items:flex-start}
+ .cm-history-panel .cm-panel-heading .btn{padding:8px;font-size:.78rem}
+}
 </style>
 <link rel="stylesheet" href="/css/zelimu-approved-dashboard.css?v=live-school-data-20261108">
 <script defer src="/js/zelimu-gold-theme.js?v=3"></script>
@@ -2582,17 +2616,20 @@ async function renderCommunicationModule(){
    <p class="muted small">Send a message to a class, learner or guardian. Results publishing is in Examination Control.</p>
    <div class="cm-context-grid"><label>Academic year<select id="cmYear"></select></label><label>Term<select id="cmTerm"></select></label></div>
    <div class="cm-recipient-grid">
-    <label>Recipient<select id="cmRecipient"><option value="class">All linked parents in class</option><option value="learner">Parents of one learner</option><option value="parent">One parent / guardian</option></select></label>
+    <label>Recipient<select id="cmRecipient"><option value="class">All linked parents in class</option><option value="learner">Parents of one learner</option><option value="parent">One parent / guardian</option><option value="manual">Enter phone number manually</option></select></label>
     <label data-cm-target="class">Class<select id="cmMessageClass"></select></label>
     <label data-cm-target="learner" hidden>Learner<select id="cmLearner"></select></label>
     <label data-cm-target="parent" hidden>Parent<select id="cmParent"></select></label>
+    <label data-cm-target="manual" hidden>Phone number<input id="cmManualPhone" type="tel" autocomplete="tel" maxlength="30" placeholder="0712345678 or +254712345678"></label>
    </div>
+   <label class="cm-consent-field" data-cm-target="manual" hidden><input id="cmManualConsent" type="checkbox"> I confirm this recipient has agreed to receive SMS messages.</label>
    <label class="cm-message-field">Message<textarea id="cmMessage" rows="4" placeholder="Type your school message…"></textarea></label>
    <div class="actions"><button class="btn primary" id="cmSend" type="button">SEND SMS</button></div>
    <div id="cmSendMsg" class="notice" role="status" aria-live="polite"></div>
   </section>
   <section class="analytics-panel cm-history-panel" aria-label="Recent communication history">
    <div class="cm-panel-heading"><div><h3>Recent communication history</h3><p class="muted small">Open a class to review its recent parent messages.</p></div><button class="btn secondary" id="cmRefreshHistory" type="button">Refresh</button></div>
+   <div id="cmHistoryStatus" class="muted small" role="status" aria-live="polite"></div>
    <div id="cmHistory" aria-live="polite">Loading…</div>
   </section>`;
  opts($('cmYear'),state.years,x=>x.year_label,'Select academic year');
@@ -2629,12 +2666,12 @@ async function renderCommunicationModule(){
     if(!groups.has(key))groups.set(key,{label:message.class_name?`${message.class_name}${message.stream?' · '+message.stream:''}`:'Other / individual messages',rows:[]});
     groups.get(key).rows.push(message);
    });
-   $('cmHistory').innerHTML=[...groups.values()].map(group=>`<details class="record-class-group"><summary>${esc(group.label)}<span>${group.rows.length} message(s)</span></summary><div class="table-wrap"><table><thead><tr><th>Date</th><th>Parent</th><th>Type</th><th>Status</th><th>Message</th></tr></thead><tbody>${group.rows.map(message=>`<tr><td>${esc(new Date(message.created_at).toLocaleString())}</td><td>${esc((message.parent_first_name||'')+' '+(message.parent_last_name||''))}<br>${esc(message.phone||'')}</td><td>${esc(message.message_type)}</td><td>${esc(message.status)}</td><td>${esc(message.body)}</td></tr>`).join('')}</tbody></table></div></details>`).join('')||'<div class="notice">No messages recorded.</div>';
+   $('cmHistory').innerHTML=[...groups.values()].map(group=>`<details class="record-class-group"><summary>${esc(group.label)}<span>${group.rows.length} message(s)</span></summary><div class="table-wrap"><table><thead><tr><th>Date</th><th>Parent / recipient</th><th>Type</th><th>Status</th><th>Message</th>${isAdmin?'<th>Action</th>':''}</tr></thead><tbody>${group.rows.map(message=>`<tr><td data-label="Date">${esc(new Date(message.created_at).toLocaleString())}</td><td data-label="Recipient">${esc([message.parent_first_name,message.parent_last_name].filter(Boolean).join(' ')||'Manual recipient')}<br>${esc(message.phone||message.recipient_phone||'')}</td><td data-label="Type">${esc(message.message_type)}</td><td data-label="Status">${esc(message.status)}</td><td data-label="Message">${esc(message.body)}</td>${isAdmin?`<td data-label="Action"><button class="btn mini danger" type="button" data-cm-delete="${esc(message.id)}">Delete permanently</button></td>`:''}</tr>`).join('')}</tbody></table></div></details>`).join('')||'<div class="notice">No messages recorded.</div>';
   }catch(e){$('cmHistory').innerHTML=`<div class="notice" role="alert">${esc(e.message)}</div>`;}
  };
  const updateRecipientFields=async()=>{
   const recipient=$('cmRecipient').value;
-  document.querySelectorAll('#pm24Data [data-cm-target]').forEach(label=>{label.hidden=label.dataset.cmTarget==='class'?recipient==='parent':label.dataset.cmTarget!==recipient;});
+  document.querySelectorAll('#pm24Data [data-cm-target]').forEach(label=>{label.hidden=label.dataset.cmTarget!==recipient;});
   $('cmMessageClass').disabled=recipient==='parent';
   $('cmLearner').disabled=recipient!=='learner';
   $('cmParent').disabled=recipient!=='parent';
@@ -2644,18 +2681,39 @@ async function renderCommunicationModule(){
  $('cmYear').onchange=async()=>{await loadTerms();await loadClassLearners();};
  $('cmMessageClass').onchange=loadClassLearners;
  $('cmRefreshHistory').onclick=loadHistory;
+ $('cmHistory').onclick=async event=>{
+  const button=event.target.closest('[data-cm-delete]');
+  if(!button)return;
+  const id=button.dataset.cmDelete;
+  if(!confirm('Permanently delete this communication history entry? This cannot be undone. An SMS already sent cannot be recalled.'))return;
+  setBusy(button,true,'Deleting…');
+  try{
+   const result=await api(`/api/communications/${encodeURIComponent(sid)}/history/${encodeURIComponent(id)}`,{method:'DELETE'});
+   $('cmHistoryStatus').textContent=result.message;
+   await loadHistory();
+  }catch(e){$('cmHistoryStatus').textContent=e.message;}
+  finally{setBusy(button,false);}
+ };
  $('cmSend').onclick=async()=>{
   const recipient=$('cmRecipient').value,message=$('cmMessage').value.trim(),button=$('cmSend'),status=$('cmSendMsg');
   if(!message)return alert('Enter a message.');
   const body={message,message_type:'SCHOOL_MESSAGE'};
   if(recipient==='class'){if(!$('cmMessageClass').value)return alert('Select a class.');body.class_id=$('cmMessageClass').value;}
   else if(recipient==='learner'){if(!$('cmLearner').value)return alert('Select a learner.');body.learner_id=$('cmLearner').value;}
-  else{if(!$('cmParent').value)return alert('Select a parent / guardian.');body.parent_guardian_ids=[$('cmParent').value];}
+  else if(recipient==='parent'){if(!$('cmParent').value)return alert('Select a parent / guardian.');body.parent_guardian_ids=[$('cmParent').value];}
+  else{
+   if(!$('cmManualPhone').value.trim())return alert('Enter a phone number.');
+   if(!$('cmManualConsent').checked)return alert('Confirm that the recipient has agreed to receive SMS messages.');
+   body.recipient_phone=$('cmManualPhone').value.trim();
+   body.consent_confirmed=true;
+  }
   setBusy(button,true,'Sending…');status.textContent='Sending SMS…';
   try{
    const result=await api(`/api/communications/${sid}/send`,{method:'POST',body});
    status.textContent=`Message processed: ${result.sent||0} sent, ${result.queued||0} queued, ${result.failed||0} failed, ${result.skipped||0} duplicate skipped.`;
-   $('cmMessage').value='';await loadHistory();
+   $('cmMessage').value='';
+   if(recipient==='manual'){$('cmManualPhone').value='';$('cmManualConsent').checked=false;}
+   await loadHistory();
   }catch(e){status.textContent=e.message;}
   finally{setBusy(button,false);}
  };
