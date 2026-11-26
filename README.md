@@ -6,6 +6,14 @@ Admin mark-entry control is now directly reachable from the Administrator Contro
 
 ZELIMU CBC is a multi-school marks, assessment, merit and report-card platform designed around isolated school tenants and three master academic templates.
 
+## Runtime readiness and mobile navigation
+
+The HTTP listener starts before additive database compatibility checks finish, but `/api/health` now returns HTTP 503 until those checks succeed. API requests also return 503 during initialization or after an initialization failure, preventing traffic from reaching an incompletely prepared schema. Review the server log and restore database compatibility before retrying a failed deployment.
+
+On phones, the dashboard navigation is collapsed behind the **Modules** button; it can be closed directly or closes after a workspace is selected. Desktop navigation and existing role-aware workspace routes are unchanged.
+
+Operational record updates validate linked learners and allocations within a school-scoped transaction, preventing concurrent over-allocation. Password-reset tokens are consumed atomically with the password update and cannot be reused.
+
 ## Master templates
 
 - **JUNIOR:** PP1, PP2, Grade 1–9
@@ -70,6 +78,12 @@ npm start
 ## Existing database upgrade
 
 The current project already contains the hardening migration used by the configured `pro_mark` database. The final code does not require a fresh database. If you are installing into a completely new database, run `database/schema.sql` followed by `database/001_hardening.sql` once.
+
+## Tracked upgrades and backups
+
+New application SQL migrations belong in `database/tracked/` and are applied explicitly with `npm run db:migrate`. The runner records checksums, rejects edits to applied migrations, and applies each file under a PostgreSQL advisory lock and transaction. Existing root-level numbered SQL migrations remain manual because their applied status varies across installations; the runner will not replay or assume their status. Back up the target database and test upgrades on staging first.
+
+Run `npm run db:backup` to create a private custom-format dump under `backups/` (or `DB_BACKUP_DIR`). It uses `DATABASE_URL` without placing the password in process arguments, then verifies the archive with `pg_restore --list`. Install PostgreSQL's `pg_dump` and `pg_restore` client utilities on the machine running the command. Keep backups encrypted and outside source control.
 
 ## Excel import
 

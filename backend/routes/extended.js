@@ -23,28 +23,60 @@ const types={
 const valid=(v)=>typeof v==='string'&&v.trim().length>0&&v.length<=300;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const statuses={transport_allocations:['ACTIVE','INACTIVE'],boarding_allocations:['ACTIVE','INACTIVE'],hr_leave:['PENDING','APPROVED','REJECTED','CANCELLED']};
-async function verifyRecord(sid,type,id){
+async function verifyRecord(sid,type,id,executor=db){
  if(!UUID.test(String(id||'')))throw Object.assign(new Error('Invalid record identifier'),{status:400});
- const q=await db.query('SELECT id,data FROM school_module_records WHERE id=$1 AND school_id=$2 AND record_type=$3',[id,sid,type]);
+ const q=await executor.query('SELECT id,data FROM school_module_records WHERE id=$1 AND school_id=$2 AND record_type=$3',[id,sid,type]);
  if(!q.rows.length)throw Object.assign(new Error('Related record not found in this school'),{status:400});
  return q.rows[0];
 }
-async function validateBusiness(sid,type,data,excludeId=null){
- if(data.learner_id){if(!UUID.test(data.learner_id))throw Error('Invalid learner ID');const q=await db.query('SELECT id FROM learners WHERE id=$1 AND school_id=$2 AND is_active=true',[data.learner_id,sid]);if(!q.rows.length)throw Error('Active learner not found in this school');}
- if(data.route_id)await verifyRecord(sid,'transport_routes',data.route_id);
- if(data.room_id)await verifyRecord(sid,'boarding_rooms',data.room_id);
+function normalizeRecordData(type,input,partial=false){
+ const fields=types[type];if(!fields)throw Object.assign(new Error('Unknown module'),{status:404});
+ const data={};
+ for(const field of fields){
+  const value=input?.[field];
+  if(partial&&value===undefined)continue;
+  if(!partial&&(value===undefined||value===null))continue;
+  if(typeof value!=='string'&&typeof value!=='number')throw Object.assign(new Error('Invalid '+field),{status:400});
+  const normalized=String(value).trim().slice(0,300);
+  if(field==='status'&&statuses[type]&&!statuses[type].includes(normalized.toUpperCase())){
+   throw Object.assign(new Error('Invalid status'),{status:400});
+  }
+  data[field]=field==='status'?normalized.toUpperCase():normalized;
+ }
+ return data;
+}
+async function withRecordLock(sid,callback){
+ const client=await db.pool.connect();
+ try{
+  await client.query('BEGIN');
+  // Serialize linked-record checks and writes so concurrent allocations cannot overbook.
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`zelimu-school-module-records:${sid}`]);
+  const result=await callback(client);
+  await client.query('COMMIT');
+  return result;
+ }catch(error){
+  await client.query('ROLLBACK').catch(()=>{});
+  throw error;
+ }finally{
+  client.release();
+ }
+}
+async function validateBusiness(sid,type,data,excludeId=null,executor=db){
+ if(data.learner_id){if(!UUID.test(data.learner_id))throw Error('Invalid learner ID');const q=await executor.query('SELECT id FROM learners WHERE id=$1 AND school_id=$2 AND is_active=true',[data.learner_id,sid]);if(!q.rows.length)throw Error('Active learner not found in this school');}
+ if(data.route_id)await verifyRecord(sid,'transport_routes',data.route_id,executor);
+ if(data.room_id)await verifyRecord(sid,'boarding_rooms',data.room_id,executor);
  if(data.capacity!==undefined&&(!Number.isInteger(Number(data.capacity))||Number(data.capacity)<1||Number(data.capacity)>2000))throw Error('Room capacity must be a whole number from 1 to 2000');
  if(data.fee_amount!==undefined&&(!Number.isFinite(Number(data.fee_amount))||Number(data.fee_amount)<0))throw Error('Route fee must be nonnegative');
  if(data.start_date&&data.end_date&&data.end_date<data.start_date)throw Error('Leave end date must be on or after start date');
- if(statuses[type]&&data.status&&!statuses[type].includes(data.status.toUpperCase()))throw Error('Invalid status');
+ if(statuses[type]&&data.status&&!statuses[type].includes(String(data.status).toUpperCase()))throw Error('Invalid status');
  if(type==='boarding_allocations'&&data.room_id&&data.learner_id&&String(data.status||'ACTIVE').toUpperCase()==='ACTIVE'){
-  const room=await verifyRecord(sid,'boarding_rooms',data.room_id);
-  const q=await db.query(`SELECT id,data FROM school_module_records WHERE school_id=$1 AND record_type='boarding_allocations' AND ($2::uuid IS NULL OR id<>$2) AND COALESCE(data->>'status','ACTIVE')='ACTIVE' AND (data->>'room_id'=$3 OR data->>'learner_id'=$4)`,[sid,excludeId,data.room_id,data.learner_id]);
+  const room=await verifyRecord(sid,'boarding_rooms',data.room_id,executor);
+  const q=await executor.query(`SELECT id,data FROM school_module_records WHERE school_id=$1 AND record_type='boarding_allocations' AND ($2::uuid IS NULL OR id<>$2) AND upper(COALESCE(NULLIF(trim(data->>'status'),''),'ACTIVE'))='ACTIVE' AND (data->>'room_id'=$3 OR data->>'learner_id'=$4)`,[sid,excludeId,data.room_id,data.learner_id]);
   if(q.rows.some(r=>r.data.learner_id===data.learner_id))throw Object.assign(new Error('Learner already has an active boarding allocation'),{status:409});
   if(q.rows.filter(r=>r.data.room_id===data.room_id).length>=Number(room.data.capacity||0))throw Object.assign(new Error('Boarding room is at full capacity'),{status:409});
  }
  if(type==='transport_allocations'&&data.learner_id&&String(data.status||'ACTIVE').toUpperCase()==='ACTIVE'){
-  const q=await db.query(`SELECT id FROM school_module_records WHERE school_id=$1 AND record_type='transport_allocations' AND ($2::uuid IS NULL OR id<>$2) AND data->>'learner_id'=$3 AND COALESCE(data->>'status','ACTIVE')='ACTIVE' LIMIT 1`,[sid,excludeId,data.learner_id]);
+  const q=await executor.query(`SELECT id FROM school_module_records WHERE school_id=$1 AND record_type='transport_allocations' AND ($2::uuid IS NULL OR id<>$2) AND data->>'learner_id'=$3 AND upper(COALESCE(NULLIF(trim(data->>'status'),''),'ACTIVE'))='ACTIVE' LIMIT 1`,[sid,excludeId,data.learner_id]);
   if(q.rows.length)throw Object.assign(new Error('Learner already has an active transport allocation'),{status:409});
  }
 }
@@ -54,23 +86,30 @@ router.get('/:schoolId/:type',schoolBoundary,roles(...ADMIN),async(req,res)=>{
 });
 router.post('/:schoolId/:type',schoolBoundary,roles(...ADMIN),async(req,res)=>{
  try{const fields=types[req.params.type];if(!fields)return res.status(404).json({error:'Unknown module'});
- const data={};for(const field of fields){const v=req.body?.[field];if(v!==undefined&&v!==null){if(typeof v!=='string'&&typeof v!=='number')return res.status(400).json({error:'Invalid '+field});data[field]=String(v).trim().slice(0,300)}}
+ const data=normalizeRecordData(req.params.type,req.body||{});
  const required={transport_routes:'name',transport_allocations:'learner_id',boarding_rooms:'name',boarding_allocations:'learner_id',hr_leave:'staff_name',hr_training:'title',transport_trips:'trip_date',transport_maintenance:'vehicle_registration',transport_incidents:'incident_date',boarding_rollcalls:'rollcall_date',boarding_welfare:'learner_id',boarding_supplies:'item_name',hr_recruitment:'position',hr_appraisals:'staff_name',hr_documents:'staff_name'}[req.params.type];if(!valid(data[required]))return res.status(400).json({error:'Required: '+required});
- await validateBusiness(req.params.schoolId,req.params.type,data);
- const q=await db.query('INSERT INTO school_module_records(school_id,record_type,data,created_by) VALUES($1,$2,$3,$4) RETURNING *',[req.params.schoolId,req.params.type,JSON.stringify(data),req.user.user_id]);res.status(201).json(q.rows[0]);}catch(e){res.status(400).json({error:e.message})}
+ const q=await withRecordLock(req.params.schoolId,async client=>{
+  await validateBusiness(req.params.schoolId,req.params.type,data,null,client);
+  return client.query('INSERT INTO school_module_records(school_id,record_type,data,created_by) VALUES($1,$2,$3,$4) RETURNING *',[req.params.schoolId,req.params.type,JSON.stringify(data),req.user.user_id]);
+ });res.status(201).json(q.rows[0]);}catch(e){res.status(e.status||400).json({error:e.message})}
 });
 router.patch('/:schoolId/:type/:id',schoolBoundary,roles(...ADMIN),async(req,res)=>{
- try{const fields=types[req.params.type];if(!fields)return res.status(404).json({error:'Unknown module'});const data={};for(const f of fields)if(req.body?.[f]!==undefined){if(typeof req.body[f]!=='string'&&typeof req.body[f]!=='number')return res.status(400).json({error:'Invalid '+f});data[f]=String(req.body[f]).trim().slice(0,300)}
- const old=await verifyRecord(req.params.schoolId,req.params.type,req.params.id);
- await validateBusiness(req.params.schoolId,req.params.type,{...old.data,...data},req.params.id);
- const q=await db.query('UPDATE school_module_records SET data=data || $4::jsonb,updated_at=now() WHERE school_id=$1 AND record_type=$2 AND id=$3 RETURNING *',[req.params.schoolId,req.params.type,req.params.id,JSON.stringify(data)]);if(!q.rows.length)return res.status(404).json({error:'Record not found'});res.json(q.rows[0])}catch(e){res.status(400).json({error:e.message})}
+ try{const fields=types[req.params.type];if(!fields)return res.status(404).json({error:'Unknown module'});const data=normalizeRecordData(req.params.type,req.body||{},true);
+ const q=await withRecordLock(req.params.schoolId,async client=>{
+  const old=await verifyRecord(req.params.schoolId,req.params.type,req.params.id,client);
+  await validateBusiness(req.params.schoolId,req.params.type,{...old.data,...data},req.params.id,client);
+  return client.query('UPDATE school_module_records SET data=data || $4::jsonb,updated_at=now() WHERE school_id=$1 AND record_type=$2 AND id=$3 RETURNING *',[req.params.schoolId,req.params.type,req.params.id,JSON.stringify(data)]);
+ });if(!q.rows.length)return res.status(404).json({error:'Record not found'});res.json(q.rows[0])}catch(e){res.status(e.status||400).json({error:e.message})}
 });
 router.delete('/:schoolId/:type/:id',schoolBoundary,roles(...ADMIN),async(req,res)=>{try{
  const type=req.params.type,sid=req.params.schoolId,id=req.params.id;
  if(!types[type])return res.status(404).json({error:'Unknown module'});
  if(!UUID.test(id))return res.status(400).json({error:'Invalid record identifier'});
- const childType=type==='boarding_rooms'?'boarding_allocations':type==='transport_routes'?'transport_allocations':null;
- if(childType){const refField=type==='boarding_rooms'?'room_id':'route_id';const children=await db.query(`SELECT 1 FROM school_module_records WHERE school_id=$1 AND record_type=$2 AND data->>$3=$4 LIMIT 1`,[sid,childType,refField,id]);if(children.rows.length)return res.status(409).json({error:'Remove linked learner allocations before deleting this record'});}
- const q=await db.query('DELETE FROM school_module_records WHERE school_id=$1 AND record_type=$2 AND id=$3 RETURNING id',[sid,type,id]);res.status(q.rows.length?200:404).json(q.rows.length?{deleted:true}:{error:'Not found'});
+ const q=await withRecordLock(sid,async client=>{
+  const childType=type==='boarding_rooms'?'boarding_allocations':type==='transport_routes'?'transport_allocations':null;
+  if(childType){const refField=type==='boarding_rooms'?'room_id':'route_id';const children=await client.query(`SELECT 1 FROM school_module_records WHERE school_id=$1 AND record_type=$2 AND data->>$3=$4 LIMIT 1`,[sid,childType,refField,id]);if(children.rows.length)throw Object.assign(new Error('Remove linked learner allocations before deleting this record'),{status:409});}
+  return client.query('DELETE FROM school_module_records WHERE school_id=$1 AND record_type=$2 AND id=$3 RETURNING id',[sid,type,id]);
+ });res.status(q.rows.length?200:404).json(q.rows.length?{deleted:true}:{error:'Not found'});
  }catch(e){res.status(e.status||400).json({error:e.message})}});
 module.exports=router;
+module.exports.normalizeRecordData=normalizeRecordData;

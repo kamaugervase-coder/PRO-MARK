@@ -772,3 +772,24 @@ body .z7-error{color:#9e3b3b!important}
  body .z7-table-wrap{overflow-x:auto}
  body .z7-live-plot{min-height:155px}
 }
+
+body .z7-mobile-menu-toggle,
+body .z7-mobile-menu-close{display:none}
+body .z7-mobile-menu-toggle:focus-visible,
+body .z7-mobile-menu-close:focus-visible{outline:3px solid #e5bb45;outline-offset:2px}
+@media(max-width:750px){
+ body:has(.z7) .z7-mobile-menu-toggle{
+  display:inline-flex!important;align-items:center;justify-content:center;min-height:42px;
+  padding:9px 12px;border:1px solid #b8d9c5;border-radius:9px;
+  background:#eaf5ee;color:#064e3b;font:700 13px 'Inter',system-ui,sans-serif;
+  cursor:pointer
+ }
+ body:has(.z7) .z7-side{display:none!important;position:relative!important;width:100%!important;height:auto!important;max-height:none!important;overflow:visible!important}
+ body:has(.z7) .z7.z7-mobile-menu-open .z7-side{display:block!important}
+ body:has(.z7) .z7-mobile-menu-close{
+  display:block!important;width:100%;min-height:42px;margin:0 0 12px;padding:9px 12px;
+  border:1px solid rgba(255,255,255,.28);border-radius:8px;
+  background:rgba(255,255,255,.1);color:#fff;font:700 13px 'Inter',system-ui,sans-serif;
+  text-align:left;cursor:pointer
+ }
+}

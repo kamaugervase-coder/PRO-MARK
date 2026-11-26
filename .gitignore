@@ -8,3 +8,4 @@ node_modules/
 /backend/**/*.bak
 /backend/**/*.backup
 /backend/**/*.before-*
+/backups/

@@ -5,6 +5,7 @@ const crypto=require('crypto');
 const db=require('../db');
 const router=express.Router();
 const {authenticate}=require('../middleware/auth');
+const {resetPassword}=require('../services/password-reset');
 
 async function tableColumns(table){
   const q=await db.query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,[table]);
@@ -193,12 +194,8 @@ router.post('/reset-password',async(req,res)=>{
     if(!token||token.length>200)return res.status(400).json({error:'Reset link is invalid or expired.'});
     if(password.length<10)return res.status(400).json({error:'Password must be at least 10 characters.'});
     await db.query(`CREATE TABLE IF NOT EXISTS password_reset_tokens (id bigserial PRIMARY KEY,user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,token_hash text NOT NULL UNIQUE,expires_at timestamptz NOT NULL,used_at timestamptz,created_at timestamptz NOT NULL DEFAULT now())`);
-    const tokenHash=crypto.createHash('sha256').update(token).digest('hex');
-    const q=await db.query('SELECT id,user_id FROM password_reset_tokens WHERE token_hash=$1 AND used_at IS NULL AND expires_at>now() LIMIT 1',[tokenHash]);
-    if(!q.rows.length)return res.status(400).json({error:'Reset link is invalid or expired. Please request a new one.'});
-    const hash=await bcrypt.hash(password,12);
-    await db.query('BEGIN');
-    try{await db.query('UPDATE users SET password_hash=$2,updated_at=now() WHERE id=$1',[q.rows[0].user_id,hash]);await db.query('UPDATE password_reset_tokens SET used_at=now() WHERE id=$1',[q.rows[0].id]);await db.query('UPDATE password_reset_tokens SET used_at=now() WHERE user_id=$1 AND used_at IS NULL',[q.rows[0].user_id]);await db.query('COMMIT');}catch(e){await db.query('ROLLBACK');throw e;}
+    const reset=await resetPassword(db.pool,token,password);
+    if(!reset)return res.status(400).json({error:'Reset link is invalid or expired. Please request a new one.'});
     return res.json({ok:true,message:'Password reset successfully. You can now sign in.'});
   }catch(e){console.error('RESET PASSWORD ERROR:',e);return res.status(500).json({error:'Unable to reset the password right now.'});}
 });
