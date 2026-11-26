@@ -182,7 +182,7 @@ Africa's Talking is also supported using `SMS_PROVIDER=AFRICASTALKING`, `SMS_AFR
 
 ## Results Sent to Parents Management Centre
 
-Results history is grouped by class, then publication, with learner/guardian SMS details available in the publication drill-down. Academic year, term, assessment and SMS delivery status filters are available. Administrators can retry a single failed notification, archive/restore a publication without deleting its records, or withdraw it to prevent further notifications. Previously sent SMS and publication snapshots remain in history.
+Results history is grouped by class, then publication, with learner/guardian SMS details available in the publication drill-down. Academic year, term, assessment and SMS delivery status filters are available. Administrators can retry a single failed notification, archive/restore a publication, or withdraw it to prevent further notifications. They can also permanently delete a publication, its saved learner snapshots and associated SMS history; delivered SMS cannot be recalled.
 
 For an existing database, first ensure migrations `022_results_publication_centre.sql` and `036_publish_per_assessment.sql` are applied, then apply `037_results_publication_class_history.sql` and `038_result_publication_lifecycle.sql` once, in order. These migrations preserve existing publication history and backfill the class recorded for older publications.
 
@@ -201,4 +201,4 @@ Migration 042 enables saved teacher workload limits and immutable timetable publ
 
 ## Results publication history and additional SMS recipients
 
-Results publications can be archived and restored by school admins; learner snapshots and SMS history are retained rather than permanently deleted. Already-published classes are not selectable for another publish attempt. To send an individual learner's published result to an additional parent number, open the publication details, select the learner, enter the number, and confirm the parent's SMS consent. Apply `database/tracked/001_publication_manual_sms_recipients.sql` with `npm run db:migrate` after backing up and testing on staging. SMS delivery still requires a configured provider.
+Results publications can be archived/restored or permanently deleted by school admins. Permanent deletion removes that publication's learner snapshots and associated SMS history but does not delete saved marks; SMS already delivered cannot be recalled. Deletion is blocked while messages are queued or sending. Already-published classes are not selectable for another publish attempt. To send an individual learner's published result to an additional parent number, use the panel beside the publishing controls, choose an active publication and learner, enter the number, and confirm the parent's SMS consent. Apply `database/tracked/001_publication_manual_sms_recipients.sql` with `npm run db:migrate` after backing up and testing on staging. SMS delivery still requires a configured provider.

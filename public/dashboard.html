@@ -789,6 +789,7 @@ body main.page #zelimuWorkspaceDisplay #pm24Data.cm-workspace table tbody tr:nth
  <div class="grid"><label>Academic year<select id="pubYear"></select></label><label>Term<select id="pubTerm"></select></label><label>Assessment (grouped across subjects)<select id="pubAssessment"></select></label></div>
  <div id="publicationDeliveryStatus" class="notice" role="status"></div>
 </div>
+<div class="publication-workflow-grid">
 <details id="publicationPublishControls" class="card-subsection publication-publish-controls" aria-label="Publish results">
  <summary><b>Publish results to assessed classes</b><span class="muted small">Expand to select classes and send new results.</span></summary>
  <div class="publication-publish-body">
@@ -799,6 +800,17 @@ body main.page #zelimuWorkspaceDisplay #pm24Data.cm-workspace table tbody tr:nth
  <div class="actions"><button class="btn secondary" id="selectReadyClasses" type="button">Select all with results</button><button class="btn secondary" id="clearClassSelection" type="button">Clear selection</button><button class="btn primary" id="publishSelectedClasses" type="button" disabled>Publish &amp; notify parents</button></div>
  <div id="publishMsg" class="notice" style="display:none" aria-live="polite"></div>
 </div></details>
+<div class="card-subsection publication-manual-panel" aria-label="Send results to a specific parent number">
+ <h3>Send results to a specific number</h3>
+ <p class="muted small">Choose an active publication and learner, then send only that learner’s results to the number you enter.</p>
+ <label>Published results<select id="manualSmsPublication" disabled><option value="">Load publication history first</option></select></label>
+ <label>Learner<select id="manualSmsLearner" disabled><option value="">Select a publication first</option></select></label>
+ <label>Parent phone number<input id="manualSmsPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0712345678 or +254712345678" required></label>
+ <label class="publication-recipient-consent"><input id="manualSmsConsent" type="checkbox"> I confirm this parent/guardian has agreed to receive this learner’s results by SMS.</label>
+ <button class="btn primary" id="manualSmsSend" type="button" disabled>Send selected learner’s results</button>
+ <div id="manualSmsMessage" class="notice" role="status" hidden aria-live="polite"></div>
+</div>
+</div>
 <div class="card-subsection" aria-label="Track delivery">
  <div class="section-title"><div><h3>Classes</h3><p class="muted small">Open a class to see its publication history, then open a publication to inspect learner and guardian notifications.</p></div><div class="publication-history-actions"><label>SMS status<select id="publicationStatusFilter"><option value="">All statuses</option><option value="SENT">Sent</option><option value="FAILED">Failed</option><option value="QUEUED">Queued</option><option value="SENDING">Sending</option><option value="SKIPPED">Skipped</option></select></label><label class="publication-archived-filter"><input type="checkbox" id="includeArchivedPublications"> Include archived</label><button class="btn secondary" id="refreshPublicationHistory" type="button">Refresh</button></div></div>
  <div id="publicationSummary" class="publication-summary-grid"><div class="item">Select an academic year and term to load publication totals.</div></div>
@@ -2186,6 +2198,8 @@ async function loadControlAssessments(refreshTerm=true){const y=$('mcYear').valu
 let classOverviewSelection=new Set();
 let publicationClasses=[];
 let selectedPublicationClass=null;
+let selectedPublicationDetailId=null;
+let selectedPublicationDetailClass=null;
 let publishAssessmentGroups=new Map();
 function publicationAssessmentType(assessment){
  const normalize=value=>String(value||'').trim().toUpperCase().replace(/[-\s]+/g,'_');
@@ -2325,12 +2339,62 @@ function renderClassPublications(classId){
   const lifecycleClass=p.status==='WITHDRAWN'?'is-unpublished':Number(p.sms_failed)||pending?'is-partial':Number(p.sms_sent)?'is-published':'is-unpublished';
   const lifecycle=p.status==='WITHDRAWN'?'<span class="publication-state '+lifecycleClass+'">Withdrawn</span>':'<span class="publication-state '+lifecycleClass+'">'+esc(delivery)+'</span>';
   const notificationActions=p.status==='WITHDRAWN'?'<span class="muted small">Notifications disabled for withdrawn results.</span>':'<button class="btn publication-send" data-publication-id="'+esc(p.id)+'" type="button">Send notifications</button><button class="btn secondary publication-retry" data-publication-id="'+esc(p.id)+'" type="button">Retry failed</button>';
-  return '<article class="publication-history-card"><div class="publication-history-head"><div><h4>'+esc(name)+'</h4><span class="muted small">Published '+esc(new Date(p.created_at).toLocaleString())+' · By '+esc(p.created_by_name||'Administrator')+(p.archived_at?' · Archived':'')+'</span></div>'+lifecycle+'</div><p>'+esc(p.learner_count||0)+' learners · '+esc(p.sms_sent||0)+' SMS sent · '+esc(p.sms_failed||0)+' failed · '+esc(pending)+' pending · '+esc(p.sms_skipped||0)+' skipped</p><div class="actions"><button class="btn secondary publication-view" data-publication-id="'+esc(p.id)+'" data-class-id="'+esc(c.class_id)+'" type="button">View publication details</button>'+notificationActions+'<button class="btn secondary publication-archive" data-publication-id="'+esc(p.id)+'" data-archived="'+(p.archived_at?'true':'false')+'" type="button">'+(p.archived_at?'Restore':'Archive')+'</button>'+(p.status==='PUBLISHED'?'<button class="btn danger publication-withdraw" data-publication-id="'+esc(p.id)+'" type="button">Withdraw</button>':'')+'</div></article>';
+  return '<article class="publication-history-card"><div class="publication-history-head"><div><h4>'+esc(name)+'</h4><span class="muted small">Published '+esc(new Date(p.created_at).toLocaleString())+' · By '+esc(p.created_by_name||'Administrator')+(p.archived_at?' · Archived':'')+'</span></div>'+lifecycle+'</div><p>'+esc(p.learner_count||0)+' learners · '+esc(p.sms_sent||0)+' SMS sent · '+esc(p.sms_failed||0)+' failed · '+esc(pending)+' pending · '+esc(p.sms_skipped||0)+' skipped</p><div class="actions"><button class="btn secondary publication-view" data-publication-id="'+esc(p.id)+'" data-class-id="'+esc(c.class_id)+'" type="button">View publication details</button>'+notificationActions+'<button class="btn secondary publication-archive" data-publication-id="'+esc(p.id)+'" data-archived="'+(p.archived_at?'true':'false')+'" type="button">'+(p.archived_at?'Restore':'Archive')+'</button>'+(p.status==='PUBLISHED'?'<button class="btn danger publication-withdraw" data-publication-id="'+esc(p.id)+'" type="button">Withdraw</button>':'')+'<button class="btn danger publication-delete" data-publication-id="'+esc(p.id)+'" type="button">Delete permanently</button></div></article>';
  }).join(''):emptyHistory)+'</div>';
+}
+function showManualSmsMessage(message,isError=false){
+ const el=$('manualSmsMessage');if(!el)return;
+ el.hidden=false;el.textContent=message;el.setAttribute('role',isError?'alert':'status');
+}
+async function loadManualSmsPublicationOptions(){
+ const select=$('manualSmsPublication'),learnerSelect=$('manualSmsLearner');
+ if(!select||!learnerSelect)return;
+ const previous=select.value;
+ const options=publicationClasses.flatMap(c=>(c.publications||[])
+  .filter(p=>p.status==='PUBLISHED')
+  .map(p=>({publication:p,className:[c.class_name,c.stream].filter(Boolean).join(' · ')})));
+ if(!options.length){
+  select.innerHTML='<option value="">No active publications</option>';select.disabled=true;
+  learnerSelect.innerHTML='<option value="">No active publication selected</option>';learnerSelect.disabled=true;
+  $('manualSmsSend').disabled=true;
+  const hasWithdrawn=publicationClasses.some(c=>(c.publications||[]).some(p=>p.status==='WITHDRAWN'));
+  showManualSmsMessage(hasWithdrawn?'No active publications are available. Withdrawn publications cannot send or retry SMS.':'No active publications are available for this period.');
+  return;
+ }
+ select.innerHTML=options.map(({publication:p,className})=>'<option value="'+esc(p.id)+'">'+esc(className)+' · '+esc(p.assessment_name||'Full term results')+' · '+esc(new Date(p.created_at).toLocaleString())+'</option>').join('');
+ select.disabled=false;
+ select.value=options.some(({publication})=>String(publication.id)===previous)?previous:String(options[0].publication.id);
+ await loadManualSmsLearners(select.value);
+}
+async function loadManualSmsLearners(publicationId){
+ const select=$('manualSmsLearner'),send=$('manualSmsSend');
+ if(!select||!send)return;
+ const requestId=String(publicationId||''),previous=select.value;
+ select.disabled=true;send.disabled=true;
+ if(!requestId){select.innerHTML='<option value="">Select a publication first</option>';return;}
+ select.innerHTML='<option value="">Loading learners…</option>';
+ try{
+  const d=await api('/api/communications/'+encodeURIComponent(sid)+'/result-publications/'+encodeURIComponent(requestId));
+  if(String($('manualSmsPublication')?.value||'')!==requestId)return;
+  const records=d.records||[];
+  if(!records.length){
+   select.innerHTML='<option value="">No learners in this publication</option>';
+   showManualSmsMessage('This publication has no learner results to send.');
+   return;
+  }
+  select.innerHTML=records.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.learner_name)+' · '+esc(r.admission_no||'No admission number')+'</option>').join('');
+  if(records.some(r=>String(r.id)===previous))select.value=previous;
+  select.disabled=false;send.disabled=false;
+  $('manualSmsMessage').hidden=true;
+ }catch(e){
+  if(String($('manualSmsPublication')?.value||'')!==requestId)return;
+  select.innerHTML='<option value="">Unable to load learners</option>';
+  showManualSmsMessage('Unable to load learners: '+e.message,true);
+ }
 }
 async function loadPublicationHistory(){
  const y=$('pubYear').value,t=$('pubTerm').value,h=$('publicationHistory');
- if(!y||!t){publicationClasses=[];selectedPublicationClass=null;h.innerHTML='<div class="notice">Select an academic year and term to load classes.</div>';renderPublicationSummary({});return;}
+ if(!y||!t){publicationClasses=[];selectedPublicationClass=null;h.innerHTML='<div class="notice">Select an academic year and term to load classes.</div>';renderPublicationSummary({});await loadManualSmsPublicationOptions();return;}
  h.innerHTML='<div class="notice">Loading class publication history…</div>';
  try{
   const q=new URLSearchParams({academic_year_id:y,term_id:t}),assessmentId=$('pubAssessment')?.value;
@@ -2340,9 +2404,11 @@ async function loadPublicationHistory(){
   publicationClasses=r.classes||[];selectedPublicationClass=null;
   renderPublicationSummary(r.summary||{});renderSmsDeliveryStatus(r.sms_delivery);
   renderPublicationClasses();
- }catch(e){h.innerHTML='<div class="notice" role="alert">Unable to load class publication history: '+esc(e.message)+'</div>';}
+  await loadManualSmsPublicationOptions();
+ }catch(e){publicationClasses=[];h.innerHTML='<div class="notice" role="alert">Unable to load class publication history: '+esc(e.message)+'</div>';await loadManualSmsPublicationOptions();}
 }
 async function loadPublicationDetail(id,classId){
+ selectedPublicationDetailId=String(id);selectedPublicationDetailClass=classId?String(classId):null;
  const h=$('publicationDetail');h.hidden=false;h.innerHTML='<div class="notice">Loading publication details…</div>';
  try{
   const d=await api('/api/communications/'+encodeURIComponent(sid)+'/result-publications/'+encodeURIComponent(id));
@@ -2361,10 +2427,7 @@ async function loadPublicationDetail(id,classId){
    for(const r of rows)for(const m of (byRecord.get(r.id)||[])){if(m.status==='SENT')counts.SENT++;else if(m.status==='FAILED')counts.FAILED++;else if(!['SKIPPED'].includes(m.status))counts.PENDING++;}
    return '<h4>'+esc(name)+' · '+rows.length+' learner(s) <span class="muted small">SMS: '+counts.SENT+' sent · '+counts.FAILED+' failed · '+counts.PENDING+' pending</span></h4><div class="publication-learners">'+rows.map(r=>'<article class="publication-learner-card"><div class="publication-learner-heading"><div><b>'+esc(r.learner_name)+'</b><span class="muted small">Admission: '+esc(r.admission_no||'—')+'</span></div><span class="muted small">'+esc(r.result_snapshot?.overall_average==null?'—':Number(r.result_snapshot.overall_average).toFixed(2)+'%')+' · '+esc(r.result_snapshot?.overall_grade||'—')+'</span></div><div class="publication-guardians">'+statusCell(r)+'</div></article>').join('')+'</div>';
   }).join('');
-  const manualRecipient=d.publication.status==='PUBLISHED'&&records.length
-   ?'<form class="publication-manual-recipient card-subsection"><h4>Send one learner’s results to another parent</h4><div class="grid"><label>Learner<select required class="publication-recipient-learner">'+records.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.learner_name)+' · '+esc(r.admission_no||'No admission number')+'</option>').join('')+'</select></label><label>Parent phone number<input class="publication-recipient-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0712345678 or +254712345678" required></label></div><label class="publication-recipient-consent"><input type="checkbox" required> I confirm this parent/guardian has agreed to receive this learner’s results by SMS.</label><button class="btn" type="button" data-publication-id="'+esc(d.publication.id)+'" data-send-publication-recipient>Send selected learner’s results</button><p class="muted small">Only the selected learner’s result will be sent. A notification record is saved for this number.</p></form>'
-   :'';
-  h.innerHTML='<div class="section-title"><div><h3>'+esc(d.publication.assessment_id?(d.publication.assessment_name||'Assessment results'):'Full term results')+(d.publication.status==='WITHDRAWN'?' · Withdrawn':'')+'</h3><span class="muted small">Published '+esc(new Date(d.publication.created_at).toLocaleString())+' · By '+esc(d.publication.created_by_name||'Administrator')+'</span></div><span>'+records.length+' learner(s) · '+messages.length+' notification(s)</span></div>'+(blocks||'<div class="notice">No records found for this publication.</div>')+manualRecipient;
+  h.innerHTML='<div class="section-title"><div><h3>'+esc(d.publication.assessment_id?(d.publication.assessment_name||'Assessment results'):'Full term results')+(d.publication.status==='WITHDRAWN'?' · Withdrawn':'')+'</h3><span class="muted small">Published '+esc(new Date(d.publication.created_at).toLocaleString())+' · By '+esc(d.publication.created_by_name||'Administrator')+'</span></div><span>'+records.length+' learner(s) · '+messages.length+' notification(s)</span></div>'+(blocks||'<div class="notice">No records found for this publication.</div>');
  }catch(e){h.innerHTML='<div class="notice" role="alert">Unable to load publication details: '+esc(e.message)+'</div>';}
 }
 async function sendPublicationNotifications(id,retry,notificationId){
@@ -2381,31 +2444,45 @@ async function sendPublicationNotifications(id,retry,notificationId){
  }catch(e){showPublicationManagementMessage(e.message,true);}
  finally{setBusy(button,false);}
 }
-async function sendPublicationToNumber(button){
- const form=button.closest('.publication-manual-recipient');
- const recordId=form?.querySelector('.publication-recipient-learner')?.value||'';
- const phone=form?.querySelector('.publication-recipient-phone')?.value||'';
- const consentConfirmed=Boolean(form?.querySelector('.publication-recipient-consent input')?.checked);
- const publicationId=button.dataset.publicationId;
- if(!recordId||!phone.trim()||!consentConfirmed){showPublicationManagementMessage('Select a learner, enter a parent phone number, and confirm SMS consent.',true);return;}
+async function sendPublicationToNumber(){
+ const button=$('manualSmsSend'),recordId=$('manualSmsLearner')?.value||'';
+ const phone=$('manualSmsPhone')?.value||'',consentConfirmed=Boolean($('manualSmsConsent')?.checked);
+ const publicationId=$('manualSmsPublication')?.value||'';
+ if(!publicationId||!recordId||!phone.trim()||!consentConfirmed){showManualSmsMessage('Select a publication and learner, enter a parent phone number, and confirm SMS consent.',true);return;}
  if(!confirm('Send this learner’s results to '+phone.trim()+'?'))return;
- const classId=selectedPublicationClass;
  setBusy(button,true,'Sending…');
- showPublicationManagementMessage('Sending the selected learner’s results to the additional number…');
+ showManualSmsMessage('Sending the selected learner’s results to the additional number…');
  try{
   const result=await api('/api/communications/'+encodeURIComponent(sid)+'/result-publications/'+encodeURIComponent(publicationId)+'/notifications',{
    method:'POST',body:{record_id:recordId,recipient_phone:phone.trim(),consent_confirmed:consentConfirmed}
   });
-  showPublicationManagementMessage('Additional notification attempt complete. Sent: '+result.sent+'; queued: '+result.queued+'; failed: '+result.failed+'. '+result.message);
+  const outcome='Additional notification attempt complete. Sent: '+result.sent+'; queued: '+result.queued+'; failed: '+result.failed+'. '+result.message;
   await loadPublicationHistory();
-  await loadPublicationDetail(publicationId,classId);
- }catch(e){showPublicationManagementMessage(e.message,true);}
+  if(selectedPublicationDetailId===publicationId&&$('publicationDetail')&&!$('publicationDetail').hidden)
+   await loadPublicationDetail(publicationId,selectedPublicationDetailClass);
+  showManualSmsMessage(outcome);
+ }catch(e){showManualSmsMessage(e.message,true);}
  finally{if(button.isConnected)setBusy(button,false);}
 }
 function showPublicationManagementMessage(message,isError=false){const el=$('publicationManagementMessage');if(!el)return;el.hidden=false;el.textContent=message;el.setAttribute('role',isError?'alert':'status');}
 async function updatePublicationArchive(id,archived){
  if(!confirm(archived?'Archive this publication from the normal class view? All learner and sent-message history will be retained.':'Restore this publication to the normal class view?'))return;
  try{await api('/api/communications/'+encodeURIComponent(sid)+'/result-publications/'+encodeURIComponent(id)+'/archive',{method:'PATCH',body:{archived}});const classId=selectedPublicationClass;showPublicationManagementMessage(archived?'Publication archived. Learner and SMS history remains available under Include archived.':'Publication restored to the class history.');await loadPublicationHistory();if(classId)renderClassPublications(classId);}catch(e){showPublicationManagementMessage(e.message,true);}
+}
+async function deletePublication(id){
+ if(!confirm('Permanently delete this publication, all saved learner result snapshots, and all associated SMS history? This cannot be undone. SMS already delivered cannot be recalled.'))return;
+ const classId=selectedPublicationClass;
+ try{
+  const result=await api('/api/communications/'+encodeURIComponent(sid)+'/result-publications/'+encodeURIComponent(id),{method:'DELETE',body:{}});
+  if(selectedPublicationDetailId===String(id)){
+   selectedPublicationDetailId=null;selectedPublicationDetailClass=null;
+   const detail=$('publicationDetail');detail.hidden=true;detail.innerHTML='';
+  }
+  await loadPublicationHistory();
+  await loadClassOverview();
+  if(classId)renderClassPublications(classId);
+  showPublicationManagementMessage('Publication permanently deleted. Removed '+result.deleted_learners+' learner result(s) and '+result.deleted_notifications+' SMS record(s).');
+ }catch(e){showPublicationManagementMessage(e.message,true);}
 }
 async function withdrawPublication(id){
  if(!confirm('Withdraw this publication? No further parent notifications can be sent or retried. Existing learner records and sent-message history remain, and delivered SMS cannot be recalled.'))return;
@@ -2447,8 +2524,8 @@ $('selectReadyClasses')?.addEventListener('click',()=>{document.querySelectorAll
 $('clearClassSelection')?.addEventListener('click',()=>{document.querySelectorAll('#classOverview input.class-select').forEach(cb=>{cb.checked=false;});classOverviewSelection.clear();updatePublishSelectedState();});
 $('classOverview')?.addEventListener('change',e=>{const cb=e.target.closest('input.class-select');if(!cb)return;if(cb.checked)classOverviewSelection.add(cb.dataset.classId);else classOverviewSelection.delete(cb.dataset.classId);updatePublishSelectedState();});
 $('publicationHistory').addEventListener('click',e=>{if(!e.target.closest('.publication-start-publishing'))return;const controls=$('publicationPublishControls');if(!controls)return;controls.open=true;controls.scrollIntoView({behavior:'smooth',block:'center'});});
-$('publicationDetail')?.addEventListener('click',async e=>{const button=e.target.closest('[data-send-publication-recipient]');if(button)await sendPublicationToNumber(button);});
-$('publishSelectedClasses')?.addEventListener('click',publishSelectedClasses);$('refreshPublicationHistory').addEventListener('click',loadPublicationHistory);$('publicationStatusFilter')?.addEventListener('change',()=>selectedPublicationClass?renderClassPublications(selectedPublicationClass):renderPublicationClasses());$('includeArchivedPublications')?.addEventListener('change',async()=>{const classId=selectedPublicationClass;await loadPublicationHistory();if(classId)renderClassPublications(classId);});$('publicationHistory').addEventListener('click',async e=>{const back=e.target.closest('.publication-back');if(back){selectedPublicationClass=null;renderPublicationClasses();return;}const folder=e.target.closest('[data-class-folder]');if(folder){renderClassPublications(folder.dataset.classFolder);return;}const btn=e.target.closest('button[data-publication-id]');if(!btn)return;const id=btn.dataset.publicationId;if(btn.classList.contains('publication-view'))await loadPublicationDetail(id,btn.dataset.classId);else if(btn.classList.contains('notification-retry'))await sendPublicationNotifications(id,true,btn.dataset.notificationId);else if(btn.classList.contains('publication-send'))await sendPublicationNotifications(id,false);else if(btn.classList.contains('publication-retry'))await sendPublicationNotifications(id,true);else if(btn.classList.contains('publication-archive'))await updatePublicationArchive(id,btn.dataset.archived!=='true');else if(btn.classList.contains('publication-withdraw'))await withdrawPublication(id);});$('anYear').addEventListener('change',async()=>{await terms($('anYear').value,$('anTerm'));});safeOn('mYear','change',async()=>{await terms($('mYear').value,$('mTerm'));await loadMeritAssessments();});safeOn('mTerm','change',loadMeritAssessments);safeOn('mClass','change',loadMeritAssessments);$('loadAnalytics').addEventListener('click',runAnalytics);
+$('manualSmsPublication')?.addEventListener('change',e=>loadManualSmsLearners(e.target.value));$('manualSmsSend')?.addEventListener('click',sendPublicationToNumber);
+$('publishSelectedClasses')?.addEventListener('click',publishSelectedClasses);$('refreshPublicationHistory').addEventListener('click',loadPublicationHistory);$('publicationStatusFilter')?.addEventListener('change',()=>selectedPublicationClass?renderClassPublications(selectedPublicationClass):renderPublicationClasses());$('includeArchivedPublications')?.addEventListener('change',async()=>{const classId=selectedPublicationClass;await loadPublicationHistory();if(classId)renderClassPublications(classId);});$('publicationHistory').addEventListener('click',async e=>{const back=e.target.closest('.publication-back');if(back){selectedPublicationClass=null;renderPublicationClasses();return;}const folder=e.target.closest('[data-class-folder]');if(folder){renderClassPublications(folder.dataset.classFolder);return;}const btn=e.target.closest('button[data-publication-id]');if(!btn)return;const id=btn.dataset.publicationId;if(btn.classList.contains('publication-view'))await loadPublicationDetail(id,btn.dataset.classId);else if(btn.classList.contains('notification-retry'))await sendPublicationNotifications(id,true,btn.dataset.notificationId);else if(btn.classList.contains('publication-send'))await sendPublicationNotifications(id,false);else if(btn.classList.contains('publication-retry'))await sendPublicationNotifications(id,true);else if(btn.classList.contains('publication-archive'))await updatePublicationArchive(id,btn.dataset.archived!=='true');else if(btn.classList.contains('publication-withdraw'))await withdrawPublication(id);else if(btn.classList.contains('publication-delete'))await deletePublication(id);});$('anYear').addEventListener('change',async()=>{await terms($('anYear').value,$('anTerm'));});safeOn('mYear','change',async()=>{await terms($('mYear').value,$('mTerm'));await loadMeritAssessments();});safeOn('mTerm','change',loadMeritAssessments);safeOn('mClass','change',loadMeritAssessments);$('loadAnalytics').addEventListener('click',runAnalytics);
 
 async function loadBilling(){try{const b=await api(`/api/billing/${sid}/summary`);const sub=b.subscription;const inv=b.invoices||[];const outstanding=inv.reduce((a,x)=>a+Math.max(0,Number(x.amount||0)-Number(x.amount_paid||0)),0);$('billPlan').textContent=sub?`${sub.plan_name_snapshot||'Custom'} · ${sub.billing_cycle}`:'Not assigned';$('billDue').textContent=sub?.next_due_on||'—';$('billStatus').textContent=sub?.status||'No subscription';$('billOutstanding').textContent=`${sub?.currency||'KES'} ${outstanding.toFixed(2)}`;const activeNotice=(b.notifications||[])[0];if(activeNotice){$('billingNotice').style.display='block';$('billingNotice').innerHTML=`<b>🔔 ${esc(activeNotice.title)}</b><br>${esc(activeNotice.message)} <button class="btn secondary billing-read" data-id="${activeNotice.id}" type="button">Mark read</button>`;}$('billingInvoices').innerHTML=inv.map(x=>`<div class="item"><b>${esc(x.invoice_no)}</b> · ${esc(x.computed_status||x.status)} · ${esc(x.currency)} ${Number(x.amount).toFixed(2)} · due ${esc(x.due_on)} ${x.amount_paid?`· paid ${Number(x.amount_paid).toFixed(2)}`:''}</div>`).join('')||'No invoices yet.';$('billingMethods').innerHTML=(b.methods||[]).map(x=>`<div class="item"><b>${esc(x.name)}</b><br><span class="muted small">${esc(x.instructions||'Payment instructions will be provided by ZELIMU CBC.')}</span></div>`).join('')||'No payment methods configured.';const unpaid=inv.filter(x=>!['PAID','WAIVED','CANCELLED'].includes(x.computed_status||x.status));if(isAdmin&&unpaid.length&&b.methods?.length){$('billingPaymentBox').style.display='block';opts($('billingInvoice'),unpaid,x=>`${x.invoice_no} · ${x.currency} ${Number(x.amount-x.amount_paid).toFixed(2)}`);opts($('billingMethod'),b.methods,x=>x.name);$('billingAmount').value=unpaid[0]?Math.max(0,Number(unpaid[0].amount)-Number(unpaid[0].amount_paid)).toFixed(2):'';$('billingInvoice').onchange=()=>{const x=unpaid.find(v=>v.id===$('billingInvoice').value);if(x)$('billingAmount').value=Math.max(0,Number(x.amount)-Number(x.amount_paid)).toFixed(2)}}}catch(e){if(isAdmin||isLeadership)console.warn('Billing unavailable:',e.message)}}
 $('billingPaymentForm')?.addEventListener('submit',async e=>{e.preventDefault();try{await api(`/api/billing/${sid}/invoices/${$('billingInvoice').value}/payment-request`,{method:'POST',body:{payment_method_id:$('billingMethod').value,amount:Number($('billingAmount').value),payment_date:$('billingDate').value||null,reference:$('billingReference').value}});$('billingPaymentMessage').textContent='Payment submitted for verification.';await loadBilling();}catch(x){$('billingPaymentMessage').textContent=x.message}});

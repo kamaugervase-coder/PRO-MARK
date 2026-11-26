@@ -800,6 +800,50 @@ router.patch('/:schoolId/result-publications/:publicationId/archive',schoolBound
   res.json({publication,message:archived?'Publication archived; all learner and SMS history is retained.':'Publication restored to the class history.'});
  }catch(e){res.status(e.status||400).json({error:e.message})}
 });
+router.delete('/:schoolId/result-publications/:publicationId',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{
+ let client;
+ try{
+  const sid=req.params.schoolId,publicationId=req.params.publicationId;
+  await ensureResultsCentreSchema();
+  client=await db.pool.connect();
+  await client.query('BEGIN');
+  const publication=(await client.query(
+   'SELECT id FROM result_publications WHERE id=$1 AND school_id=$2 FOR UPDATE',
+   [publicationId,sid]
+  )).rows[0];
+  if(!publication)throw Object.assign(new Error('Publication not found.'),{status:404});
+  const pending=Number((await client.query(`
+   SELECT COUNT(*)::int count FROM communication_messages m
+   WHERE m.school_id=$1 AND (
+    m.result_publication_id=$2 OR m.result_publication_record_id IN (
+     SELECT r.id FROM result_publication_records r WHERE r.publication_id=$2 AND r.school_id=$1
+    )
+   ) AND m.status IN ('QUEUED','SENDING')
+  `,[sid,publicationId])).rows[0]?.count||0);
+  if(pending)throw Object.assign(new Error('Wait for queued or sending SMS to finish before permanently deleting this publication.'),{status:409});
+  const records=Number((await client.query(
+   'SELECT COUNT(*)::int count FROM result_publication_records WHERE publication_id=$1 AND school_id=$2',
+   [publicationId,sid]
+  )).rows[0]?.count||0);
+  const messages=await client.query(`
+   DELETE FROM communication_messages m
+   WHERE m.school_id=$1 AND (
+    m.result_publication_id=$2 OR m.result_publication_record_id IN (
+     SELECT r.id FROM result_publication_records r WHERE r.publication_id=$2 AND r.school_id=$1
+    )
+   )
+  `,[sid,publicationId]);
+  await client.query('DELETE FROM result_publications WHERE id=$1 AND school_id=$2',[publicationId,sid]);
+  await client.query('COMMIT');
+  res.json({
+   ok:true,id:publicationId,deleted_learners:records,deleted_notifications:messages.rowCount,
+   message:'Publication, learner result snapshots, and associated SMS history were permanently deleted. Sent SMS cannot be recalled.'
+  });
+ }catch(e){
+  if(client)try{await client.query('ROLLBACK')}catch(rollbackError){console.error('Failed to roll back publication deletion:',rollbackError);}
+  res.status(e.status||400).json({error:e.message});
+ }finally{client?.release();}
+});
 router.post('/:schoolId/result-publications/:publicationId/withdraw',schoolBoundary,roles('SCHOOL_ADMIN','ADMIN'),async(req,res)=>{
  try{
   await ensureResultsCentreSchema();
