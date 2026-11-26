@@ -45,6 +45,14 @@ router.post('/:schoolId/analytics-export.xlsx',schoolBoundary,roles('SCHOOL_ADMI
 function normalizedPhone(phone){
  return String(phone||'').replace(/[\s()+-]/g,'');
 }
+function normalizePublicationRecipientPhone(phone){
+ const input=String(phone||'').trim();
+ let digits=normalizedPhone(input);
+ if(/^0[17]\d{8}$/.test(digits))digits='254'+digits.slice(1);
+ else if(/^[17]\d{8}$/.test(digits))digits='254'+digits;
+ if(!/^[1-9]\d{7,14}$/.test(digits))return null;
+ return '+'+digits;
+}
 function topmediaPhone(phone){
  const digits=normalizedPhone(phone);
  const international=digits.startsWith('0')?'254'+digits.slice(1):digits;
@@ -297,12 +305,17 @@ async function ensureResultsCentreSchema(){
          to_regclass('result_publication_records') IS NOT NULL records,
          EXISTS(SELECT 1 FROM information_schema.columns
           WHERE table_schema=ANY(current_schemas(false))
-            AND table_name='result_publication_records' AND column_name='class_id') class_column
- `);
+           AND table_name='result_publication_records' AND column_name='class_id') class_column,
+        (SELECT COUNT(*)::int FROM information_schema.columns
+         WHERE table_schema=ANY(current_schemas(false))
+           AND table_name='communication_messages' AND column_name=ANY($1::text[])) recipient_columns
+ `,[['recipient_phone','recipient_consent_confirmed']]);
  if(!result.rows[0]?.publications||!result.rows[0]?.records)
   throw Object.assign(new Error('Apply database migration 022_results_publication_centre.sql before using the Results Publishing Centre.'),{status:503});
  if(!result.rows[0]?.class_column)
   throw Object.assign(new Error('Apply database migration 037_results_publication_class_history.sql before using class-based publication history.'),{status:503});
+ if(Number(result.rows[0]?.recipient_columns)!==2)
+  throw Object.assign(new Error('Apply tracked migration 001_publication_manual_sms_recipients.sql with npm run db:migrate before using publication history.'),{status:503});
 }
 async function ensurePublicationLifecycleSchema(){
  const result=await db.query(`
@@ -752,7 +765,8 @@ router.get('/:schoolId/result-publications/:publicationId',schoolBoundary,roles(
   `,[publicationId,sid]);
   const messages=await db.query(`
    SELECT m.id,m.result_publication_record_id,m.parent_guardian_id,
-     CONCAT_WS(' ',pg.first_name,pg.last_name) parent_name,pg.phone,
+     COALESCE(NULLIF(CONCAT_WS(' ',pg.first_name,pg.last_name),''),'Additional recipient') parent_name,
+     COALESCE(m.recipient_phone,pg.phone) phone,
      m.status,m.provider,m.failure_reason,m.created_at,m.sent_at
    FROM communication_messages m
    LEFT JOIN parent_guardians pg ON pg.id=m.parent_guardian_id
@@ -778,7 +792,7 @@ router.patch('/:schoolId/result-publications/:publicationId/archive',schoolBound
   const publication=(await db.query(`
    UPDATE result_publications
    SET archived_at=CASE WHEN $3 THEN COALESCE(archived_at,now()) ELSE NULL END,
-       archived_by=CASE WHEN $3 THEN $4 ELSE NULL END
+       archived_by=CASE WHEN $3 THEN $4::uuid ELSE NULL END
    WHERE id=$1 AND school_id=$2
    RETURNING id,archived_at,archived_by
   `,[req.params.publicationId,req.params.schoolId,archived,req.user.user_id])).rows[0];
@@ -817,17 +831,114 @@ router.post('/:schoolId/result-publications/:publicationId/notifications',school
    return res.status(503).json({error:deliveryConfiguration.provider==='INFOBIP'
     ?'Infobip is not fully configured. Set its HTTPS base URL and API key; in trial mode, add your verified recipient numbers to SMS_INFOBIP_TRIAL_RECIPIENTS.'
     :'SMS delivery is not configured. Add provider credentials to the server before sending notifications.'});
+  if(req.body?.recipient_phone!==undefined){
+   const recipientPhone=normalizePublicationRecipientPhone(req.body.recipient_phone);
+   const recordId=String(req.body?.record_id||'');
+   if(!recipientPhone)return res.status(400).json({error:'Enter a valid phone number, such as 0712345678 or +254712345678.'});
+   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(recordId))
+    return res.status(400).json({error:'Select a learner from this publication.'});
+   if(req.body?.consent_confirmed!==true)
+    return res.status(400).json({error:'Confirm that this parent/guardian has agreed to receive the learner’s results by SMS.'});
+   const record=(await db.query(`
+    SELECT id,learner_id,result_snapshot FROM result_publication_records
+    WHERE id=$1 AND publication_id=$2 AND school_id=$3
+   `,[recordId,publicationId,sid])).rows[0];
+   if(!record)return res.status(404).json({error:'The selected learner is not part of this publication.'});
+   const matchingGuardianNotifications=(await db.query(`
+    SELECT pg.phone FROM communication_messages m
+    JOIN parent_guardians pg ON pg.id=m.parent_guardian_id
+    WHERE m.result_publication_record_id=$1 AND m.school_id=$2
+      AND m.message_type='PUBLISHED_RESULTS'
+   `,[record.id,sid])).rows;
+   if(matchingGuardianNotifications.some(row=>normalizePublicationRecipientPhone(row.phone)===recipientPhone))
+    return res.status(409).json({error:'This parent number already has a notification for this learner. Review or retry that existing notification instead.'});
+   const report=record.result_snapshot||{},learnerName=report.learner_name||'Learner';
+   const assessmentName=report.assessment_name?String(report.assessment_name):'';
+   const marksSummary=assessmentName&&Array.isArray(report.subjects)
+    ?report.subjects.map(x=>`${x.subject_name}:${x.percent==null?'—':Number(x.percent).toFixed(1)+'%'}`).join(', ')
+    :'';
+   const message=assessmentName
+    ?`${report.school_name||'School'}: ${learnerName} ${assessmentName} results. ${marksSummary?('Marks: '+marksSummary+'. '):''}Average ${report.overall_average==null?'—':Number(report.overall_average).toFixed(2)}%.`
+    :`${report.school_name||'School'}: ${learnerName} ${report.term_name||'term'} results. Average ${report.overall_average==null?'—':Number(report.overall_average).toFixed(2)}, grade ${report.overall_grade||'—'}. Log in to view the full report.`;
+   const trial=infobipTrialConfiguration();
+   if(deliveryConfiguration.provider==='INFOBIP'&&trial.trialMode&&
+      !trial.recipients.some(phone=>normalizePublicationRecipientPhone(phone)===recipientPhone))
+    return res.status(400).json({error:'This number is not in the configured Infobip trial verified-number list.'});
+   let messageRow=(await db.query(`
+    INSERT INTO communication_messages(
+     school_id,learner_id,recipient_phone,recipient_consent_confirmed,channel,message_type,body,status,provider,
+     created_by,academic_year_id,term_id,result_publication_id,result_publication_record_id,assessment_id
+    ) VALUES($1,$2,$3,true,'SMS','PUBLISHED_RESULTS',$4,'SENDING',$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT DO NOTHING RETURNING id
+   `,[sid,record.learner_id,recipientPhone,message,process.env.SMS_PROVIDER||'UNCONFIGURED',
+      req.user.user_id,publication.academic_year_id,publication.term_id,publication.id,record.id,publication.assessment_id||null])).rows[0];
+   if(!messageRow){
+    const existing=(await db.query(`
+     SELECT status FROM communication_messages
+     WHERE result_publication_record_id=$1 AND recipient_phone=$2
+       AND message_type='PUBLISHED_RESULTS' LIMIT 1
+    `,[record.id,recipientPhone])).rows[0];
+    if(existing?.status==='FAILED'){
+     messageRow=(await db.query(`
+      UPDATE communication_messages SET status='SENDING',body=$3,failure_reason=NULL,
+       provider=COALESCE(NULLIF($4,''),provider),recipient_consent_confirmed=true
+      WHERE result_publication_record_id=$1 AND recipient_phone=$2 AND status='FAILED'
+      RETURNING id
+     `,[record.id,recipientPhone,message,process.env.SMS_PROVIDER||'UNCONFIGURED'])).rows[0];
+    }
+    if(!messageRow)return res.status(409).json({error:'A notification to this number already exists for this learner and publication.'});
+   }
+   let status='QUEUED',provider=process.env.SMS_PROVIDER||'UNCONFIGURED',failure=null,providerMessageId=null;
+   try{
+    const delivery=await deliverSms({phone:recipientPhone,message,school_id:sid,learner_id:record.learner_id});
+    status=delivery.status;provider=delivery.provider||provider;providerMessageId=delivery.providerMessageId||null;
+   }catch(e){status='FAILED';failure=e.message;}
+   await db.query(`
+    UPDATE communication_messages SET status=$2,provider=$3,failure_reason=$4,
+     provider_message_id=COALESCE($5,provider_message_id),
+     sent_at=CASE WHEN $2 IN ('SENT','QUEUED') THEN now() ELSE NULL END
+    WHERE id=$1
+   `,[messageRow.id,status,provider,failure,providerMessageId]);
+   return res.json({
+    publication_id:publicationId,learner_id:record.learner_id,phone:recipientPhone,
+    sent:status==='SENT'?1:0,queued:status==='QUEUED'?1:0,failed:status==='FAILED'?1:0,skipped:0,
+    message:failure||'Result notification attempted for the selected learner.'
+   });
+  }
   const retryFailedOnly=req.body?.retry_failed_only===true;
   const notificationId=String(req.body?.notification_id||'');
   if(notificationId&&!retryFailedOnly)
    return res.status(400).json({error:'Set retry_failed_only to true to retry one notification.'});
   if(notificationId){
    const target=(await db.query(`
-    SELECT status FROM communication_messages
+    SELECT status,recipient_phone,learner_id,body FROM communication_messages
     WHERE id=$1 AND result_publication_id=$2 AND school_id=$3 AND message_type='PUBLISHED_RESULTS'
    `,[notificationId,publicationId,sid])).rows[0];
    if(!target)return res.status(404).json({error:'Notification not found for this publication.'});
    if(target.status!=='FAILED')return res.status(409).json({error:'Only failed notifications can be retried.'});
+   if(target.recipient_phone){
+    const claimed=(await db.query(`
+     UPDATE communication_messages SET status='SENDING',failure_reason=NULL,
+      provider=COALESCE(NULLIF($2,''),provider)
+     WHERE id=$1 AND status='FAILED' RETURNING id
+    `,[notificationId,process.env.SMS_PROVIDER||'UNCONFIGURED'])).rows[0];
+    if(!claimed)return res.status(409).json({error:'This notification is already being retried or is no longer failed.'});
+    let status='QUEUED',provider=process.env.SMS_PROVIDER||'UNCONFIGURED',failure=null,providerMessageId=null;
+    try{
+     const delivery=await deliverSms({phone:target.recipient_phone,message:target.body,school_id:sid,learner_id:target.learner_id});
+     status=delivery.status;provider=delivery.provider||provider;providerMessageId=delivery.providerMessageId||null;
+    }catch(e){status='FAILED';failure=e.message;}
+    await db.query(`
+     UPDATE communication_messages SET status=$2,provider=$3,failure_reason=$4,
+      provider_message_id=COALESCE($5,provider_message_id),
+      sent_at=CASE WHEN $2 IN ('SENT','QUEUED') THEN now() ELSE NULL END WHERE id=$1
+    `,[notificationId,status,provider,failure,providerMessageId]);
+    return res.json({
+     publication_id:publicationId,phone:target.recipient_phone,
+     sent:status==='SENT'?1:0,queued:status==='QUEUED'?1:0,failed:status==='FAILED'?1:0,skipped:0,
+     message:failure||'Failed additional-recipient notification retry completed.'
+    });
+   }
   }
   const records=(await db.query(`
    SELECT id,learner_id,result_snapshot FROM result_publication_records
@@ -1264,3 +1375,4 @@ module.exports=router;
 module.exports.buildPublicationSummary=buildPublicationSummary;
 module.exports.areAssessmentGroupCompatible=areAssessmentGroupCompatible;
 module.exports.deliverSms=deliverSms;
+module.exports.normalizePublicationRecipientPhone=normalizePublicationRecipientPhone;
