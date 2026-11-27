@@ -4,6 +4,7 @@ const path=require('node:path');
 const test=require('node:test');
 
 const dashboard=fs.readFileSync(path.join(__dirname,'../public/dashboard.html'),'utf8');
+const portalStyles=fs.readFileSync(path.join(__dirname,'../public/css/zelimu-approved-dashboard.css'),'utf8');
 
 test('the approved portal stylesheet follows dashboard and module-specific styles',()=>{
   const moduleStyles=dashboard.indexOf('/css/assessment-hub.css');
@@ -24,9 +25,19 @@ test('communication recipient fields respect hidden state and the send action st
 });
 
 test('opening Communication scrolls to the module and exposes manual SMS sending',()=>{
-  assert.match(dashboard,/if\(isCommunication\)requestAnimationFrame\(\(\)=>panel\?\.scrollIntoView\(\{behavior:'smooth',block:'start'\}\)\)/);
+  assert.match(dashboard,/if\(isCommunication\)panel\?\.scrollIntoView\(\{behavior:'auto',block:'start'\}\)/);
   assert.match(dashboard,/id="cmManualSmsOpen"[^>]*>SEND SMS TO ANY NUMBER/);
   assert.match(dashboard,/\$\('cmManualSmsOpen'\)\.onclick=async\(\)=>\{\s*\$\('cmRecipient'\)\.value='manual'/);
+});
+
+test('module workspaces are mounted outside the hidden legacy bridge',()=>{
+  assert.match(dashboard,/const commandCentre=main\.querySelector\(':scope > \.zelimu-command-v1'\);[\s\S]*?commandCentre\.insertAdjacentElement\('afterend',display\)/);
+});
+
+test('the command centre uses crisp readable type and softened panel surfaces',()=>{
+  assert.match(portalStyles,/body \.z7,body \.z7 \*\{-webkit-font-smoothing:auto!important;text-rendering:auto!important\}/);
+  assert.match(portalStyles,/body \.z7 \.z7-nav button\{font-size:14px!important\}/);
+  assert.match(portalStyles,/body \.z7 \.z7-panel,\s*body \.z7 \.z7-ringinner\{background:#f8fbf9!important\}/);
 });
 
 test('communication history, terms and parent lists load independently',()=>{

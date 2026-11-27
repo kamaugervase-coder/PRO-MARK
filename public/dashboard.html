@@ -3143,7 +3143,7 @@ async function openPM24(n){
  if(panel)window.zelimuMountWorkspace?.(panel);
  showSection('pm24_workspace');$('pm24Title').textContent=m[0];$('pm24Pill').textContent=m[1];
  const box=$('pm24Content');box.innerHTML=`${isCommunication?'':`<div class="analytics-panel"><h3>${esc(m[0])}</h3><p class="muted">${esc(m[1])}. This workspace is connected to persistent school records.</p><div class="actions"><button class="btn" id="pm24Refresh">Refresh live data</button>${m[2]&&m[2]!=='owner'&&!PM24DATA[n]?`<button class="btn secondary" id="pm24Detail">Open detailed existing workspace</button>`:''}</div></div>`}<div id="pm24Data" class="analytics-dashboard"><div class="notice">Loading…</div></div>`;
- if(isCommunication)requestAnimationFrame(()=>panel?.scrollIntoView({behavior:'smooth',block:'start'}));
+ if(isCommunication)panel?.scrollIntoView({behavior:'auto',block:'start'});
  const refresh=$('pm24Refresh');if(refresh)refresh.onclick=()=>openPM24(n);
  if($('pm24Detail'))$('pm24Detail').onclick=()=>showSection(m[2]);
  if(n===25){ return renderQuickResourceWorkspace(); }
@@ -3659,10 +3659,12 @@ window.zelimuPortalContext={api,state,user};
 <script id="zelimu-workspace-mount-fix">
 (function(){
  const main=document.querySelector('main.page')||document.querySelector('main');
- const sidebar=document.querySelector('.pm-workflow-intro');
- if(!main||!sidebar)return;
+ if(!main)return;
  let display=document.getElementById('zelimuWorkspaceDisplay');
- if(!display){display=document.createElement('div');display.id='zelimuWorkspaceDisplay';display.setAttribute('role','main');display.setAttribute('aria-label','Selected school module');sidebar.insertAdjacentElement('afterend',display);}
+ if(!display){display=document.createElement('div');display.id='zelimuWorkspaceDisplay';display.setAttribute('role','main');display.setAttribute('aria-label','Selected school module');}
+ const commandCentre=main.querySelector(':scope > .zelimu-command-v1');
+ if(commandCentre&&display.previousElementSibling!==commandCentre)commandCentre.insertAdjacentElement('afterend',display);
+ else if(display.parentElement!==main)main.appendChild(display);
  window.zelimuMountWorkspace=function(panel){if(panel&&panel.parentElement!==display)display.appendChild(panel);};
  const mountAll=()=>{main.querySelectorAll('.nav-managed-section').forEach(window.zelimuMountWorkspace);};
  mountAll();

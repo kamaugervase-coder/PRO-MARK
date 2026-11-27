@@ -793,3 +793,30 @@ body .z7-mobile-menu-close:focus-visible{outline:3px solid #e5bb45;outline-offse
   text-align:left;cursor:pointer
  }
 }
+
+/* Keep module workspaces aligned with the visible command-centre sidebar. */
+body:has(.z7) #zelimuWorkspaceDisplay{margin-left:0!important;width:auto!important}
+
+/* Improve legibility without relying on antialiased, soft-looking text. */
+body .z7,body .z7 *{-webkit-font-smoothing:auto!important;text-rendering:auto!important}
+body .z7 .z7-nav button{font-size:14px!important}
+body .z7 .z7-navhead,
+body .z7 .z7-kpi-name,
+body .z7 .z7-kpi-note,
+body .z7 .z7-actionrow,
+body .z7 .z7-chart-context,
+body .z7 .z7-chart-loading,
+body .z7 .z7-finlist,
+body .z7 .z7-table,
+body .z7 .z7-shortcut,
+body .z7 .z7-chart-note{font-size:12px!important}
+body .z7 .z7-heading p{font-size:13px!important}
+body .z7 .z7-panel h2{font-size:16px!important}
+body .z7 .z7-axislabel,
+body .z7 .z7-barlabel,
+body .z7 .z7-barvalue{font-size:12px!important}
+
+/* Soften stark white blocks while keeping the page and its text high-contrast. */
+body .z7 .z7-panel,
+body .z7 .z7-ringinner{background:#f8fbf9!important}
+body .z7 .z7-actionrow{background:#f5f8f6!important}
