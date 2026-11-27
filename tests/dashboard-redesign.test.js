@@ -22,3 +22,14 @@ test('communication recipient fields respect hidden state and the send action st
   assert.match(dashboard,/\.cm-compose-panel \[data-cm-target\]\[hidden\]\{display:none!important\}/);
   assert.match(dashboard,/\.cm-compose-panel \.actions \.btn\{width:100%;min-height:48px/);
 });
+
+test('opening Communication scrolls to the module and exposes manual SMS sending',()=>{
+  assert.match(dashboard,/if\(isCommunication\)requestAnimationFrame\(\(\)=>panel\?\.scrollIntoView\(\{behavior:'smooth',block:'start'\}\)\)/);
+  assert.match(dashboard,/id="cmManualSmsOpen"[^>]*>SEND SMS TO ANY NUMBER/);
+  assert.match(dashboard,/\$\('cmManualSmsOpen'\)\.onclick=async\(\)=>\{\s*\$\('cmRecipient'\)\.value='manual'/);
+});
+
+test('communication history, terms and parent lists load independently',()=>{
+  assert.match(dashboard,/await Promise\.all\(\[loadTerms\(\),loadParents\(\),loadHistory\(\)\]\)/);
+  assert.match(dashboard,/Unable to load academic terms:/);
+});

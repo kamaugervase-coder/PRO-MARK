@@ -426,7 +426,7 @@ body main.page #zelimuWorkspaceDisplay table:not(.merit-sheet):not(.zrc-table):n
 body main.page #zelimuWorkspaceDisplay #publishResults table tbody td{background:#f4fbf6!important;color:#244b36!important}
 body main.page #zelimuWorkspaceDisplay #publishResults table tbody tr:nth-child(even)>td{background:#e8f6ed!important}
 body main.page #zelimuWorkspaceDisplay #publishResults table tbody tr:hover>td{background:#d8efdf!important}
-body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{display:flex!important;flex-direction:column;height:calc(100dvh - 120px);min-height:0!important;max-height:calc(100dvh - 120px);overflow:hidden!important;padding:12px!important}
+body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active{display:flex!important;flex-direction:column;height:calc(100dvh - 120px);min-height:0!important;max-height:calc(100dvh - 120px);overflow:hidden!important;padding:12px!important;scroll-margin-top:16px}
 body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active>.section-title{flex:0 0 auto;margin:0 0 8px!important;padding-bottom:8px!important}
 body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Content{display:flex!important;flex:1 1 auto;min-height:0;margin:0!important;overflow:hidden}
 body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Data{display:grid!important;grid-template-columns:minmax(300px,.78fr) minmax(0,1.22fr);gap:12px;margin:0!important;min-height:0;flex:1 1 auto;overflow:hidden}
@@ -2617,7 +2617,10 @@ async function renderCommunicationModule(){
   <section class="analytics-panel cm-compose-panel" aria-label="Compose parent message">
    <div class="cm-panel-heading"><h3>Compose message</h3><span class="pill">School SMS</span></div>
    <p class="muted small">Send a message to a class, learner or guardian. Results publishing is in Examination Control.</p>
+   <button class="btn secondary" id="cmManualSmsOpen" type="button" aria-controls="cmManualPhone">SEND SMS TO ANY NUMBER</button>
+   <p id="cmTermStatus" class="muted small" role="status" aria-live="polite"></p>
    <div class="cm-context-grid"><label>Academic year<select id="cmYear"></select></label><label>Term<select id="cmTerm"></select></label></div>
+   <p id="cmParentStatus" class="muted small" role="status" aria-live="polite"></p>
    <div class="cm-recipient-grid">
     <label>Recipient<select id="cmRecipient"><option value="class">All linked parents in class</option><option value="learner">Parents of one learner</option><option value="parent">One parent / guardian</option><option value="manual">Enter phone number manually</option></select></label>
     <label data-cm-target="class">Class<select id="cmMessageClass"></select></label>
@@ -2643,13 +2646,23 @@ async function renderCommunicationModule(){
  const loadTerms=async()=>{
   const yearId=$('cmYear').value;
   if(!yearId){opts($('cmTerm'),[],()=>{},'Select term');return;}
-  await terms(yearId,$('cmTerm'));
+  try{
+   await terms(yearId,$('cmTerm'));
+   $('cmTermStatus').textContent='';
+  }catch(e){
+   opts($('cmTerm'),[],()=>{},'Terms unavailable');
+   $('cmTermStatus').textContent=`Unable to load academic terms: ${e.message}`;
+  }
  };
  const loadParents=async()=>{
   try{
    const parents=await api(`/api/communications/${sid}/parents`);
    opts($('cmParent'),parents,x=>`${x.first_name||''} ${x.last_name||''} · ${x.phone||'No phone'} · ${x.sms_enabled?'SMS ON':'SMS OFF'} · ${x.communication_consent?'Consent ON':'Consent OFF'}`,'Select parent / guardian');
-  }catch(e){opts($('cmParent'),[],()=>{},'Unable to load parents');}
+   $('cmParentStatus').textContent='';
+  }catch(e){
+   opts($('cmParent'),[],()=>{},'Unable to load parents');
+   $('cmParentStatus').textContent=`Unable to load parents: ${e.message}`;
+  }
  };
  const loadClassLearners=async()=>{
   const classId=$('cmMessageClass').value,yearId=$('cmYear').value,termId=$('cmTerm').value;
@@ -2683,6 +2696,11 @@ async function renderCommunicationModule(){
  };
  $('cmYear').onchange=async()=>{await loadTerms();await loadClassLearners();};
  $('cmMessageClass').onchange=loadClassLearners;
+ $('cmManualSmsOpen').onclick=async()=>{
+  $('cmRecipient').value='manual';
+  await updateRecipientFields();
+  $('cmManualPhone').focus();
+ };
  $('cmRefreshHistory').onclick=loadHistory;
  $('cmHistory').onclick=async event=>{
   const button=event.target.closest('[data-cm-delete]');
@@ -2721,15 +2739,13 @@ async function renderCommunicationModule(){
   finally{setBusy(button,false);}
  };
  $('cmRecipient').onchange=updateRecipientFields;
- await loadTerms();
+ await Promise.all([loadTerms(),loadParents(),loadHistory()]);
  if(state.academicPeriod?.yearId===$('cmYear').value&&$('cmTerm').options.length>1)$('cmTerm').value=state.academicPeriod.termId;
  if(!$('cmTerm').value&&$('cmYear').value){
   const periodTerms=state.terms[$('cmYear').value]||[];
   if(periodTerms.length)$('cmTerm').value=periodTerms[0].id;
  }
- await loadParents();
  await updateRecipientFields();
- await loadHistory();
 }
 async function renderSchoolFinanceModule(){
  const box=$('pm24Data');
@@ -3127,6 +3143,7 @@ async function openPM24(n){
  if(panel)window.zelimuMountWorkspace?.(panel);
  showSection('pm24_workspace');$('pm24Title').textContent=m[0];$('pm24Pill').textContent=m[1];
  const box=$('pm24Content');box.innerHTML=`${isCommunication?'':`<div class="analytics-panel"><h3>${esc(m[0])}</h3><p class="muted">${esc(m[1])}. This workspace is connected to persistent school records.</p><div class="actions"><button class="btn" id="pm24Refresh">Refresh live data</button>${m[2]&&m[2]!=='owner'&&!PM24DATA[n]?`<button class="btn secondary" id="pm24Detail">Open detailed existing workspace</button>`:''}</div></div>`}<div id="pm24Data" class="analytics-dashboard"><div class="notice">Loading…</div></div>`;
+ if(isCommunication)requestAnimationFrame(()=>panel?.scrollIntoView({behavior:'smooth',block:'start'}));
  const refresh=$('pm24Refresh');if(refresh)refresh.onclick=()=>openPM24(n);
  if($('pm24Detail'))$('pm24Detail').onclick=()=>showSection(m[2]);
  if(n===25){ return renderQuickResourceWorkspace(); }
