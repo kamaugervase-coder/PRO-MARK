@@ -431,17 +431,20 @@ body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active
 body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Content{display:flex!important;flex:1 1 auto;min-height:0;margin:0!important;overflow:hidden}
 body main.page #zelimuWorkspaceDisplay #pm24_workspace.pm24-communication-active #pm24Data{display:grid!important;grid-template-columns:minmax(300px,.78fr) minmax(0,1.22fr);gap:12px;margin:0!important;min-height:0;flex:1 1 auto;overflow:hidden}
 #pm24Data.cm-workspace>.analytics-panel{display:flex;flex-direction:column;min-width:0;min-height:0;margin:0;padding:14px;overflow:hidden}
+#pm24Data.cm-workspace>.cm-compose-panel{overflow-x:hidden;overflow-y:auto}
 .cm-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
 .cm-panel-heading h3{margin:0}
 .cm-context-grid,.cm-recipient-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
-.cm-compose-panel{gap:9px}
+.cm-compose-panel{gap:9px;overflow-y:auto;overscroll-behavior:contain}
+.cm-compose-panel [data-cm-target][hidden]{display:none!important}
 .cm-compose-panel label{display:flex;flex-direction:column;gap:4px;min-width:0;margin:0}
 .cm-compose-panel select,.cm-compose-panel textarea,.cm-compose-panel input:not([type="checkbox"]){width:100%;min-width:0;box-sizing:border-box}
 .cm-compose-panel .cm-consent-field{flex-direction:row;align-items:flex-start;gap:9px;line-height:1.4}
 .cm-compose-panel .cm-consent-field input{flex:0 0 16px;margin:2px 0 0}
 .cm-compose-panel select,.cm-compose-panel input:not([type="checkbox"]){min-height:42px}
 .cm-compose-panel textarea{resize:vertical;min-height:96px;max-height:190px}
-.cm-compose-panel .actions .btn{min-height:44px}
+.cm-compose-panel .actions{position:sticky;bottom:0;z-index:2;flex:0 0 auto;margin:0;padding:10px 0 2px;background:linear-gradient(180deg,rgba(11,24,42,0),rgba(11,24,42,.96) 28%)}
+.cm-compose-panel .actions .btn{width:100%;min-height:48px;font-size:.95rem;letter-spacing:.04em}
 .cm-history-panel .cm-panel-heading{flex:0 0 auto}
 #cmHistory{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
 #cmHistory table{width:100%;table-layout:fixed}

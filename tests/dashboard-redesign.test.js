@@ -16,3 +16,9 @@ test('the approved portal stylesheet follows dashboard and module-specific style
   assert.ok(portalStyle>moduleStyles,'Shared portal styles must load after module-specific styles.');
   assert.ok(portalStyle<startupScript,'Shared portal styles must load before dashboard scripts run.');
 });
+
+test('communication recipient fields respect hidden state and the send action stays prominent',()=>{
+  assert.match(dashboard,/#pm24Data\.cm-workspace>\.cm-compose-panel\{overflow-x:hidden;overflow-y:auto\}/);
+  assert.match(dashboard,/\.cm-compose-panel \[data-cm-target\]\[hidden\]\{display:none!important\}/);
+  assert.match(dashboard,/\.cm-compose-panel \.actions \.btn\{width:100%;min-height:48px/);
+});
