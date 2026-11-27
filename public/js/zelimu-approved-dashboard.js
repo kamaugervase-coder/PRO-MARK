@@ -407,8 +407,8 @@ function make(){
    $('z7FeeRate').innerHTML=`${rate.toFixed(0)}%<small>Collection rate</small>`;
    $('z7FeeRing').style.background=`conic-gradient(#00825c ${rate}%, #e5eee9 ${rate}% 100%)`;
    const charges=data.charges||[],today=new Date().toISOString().slice(0,10);
-   const overdue=charges.filter(charge=>number(charge.balance)>0&&charge.due_on&&String(charge.due_on).slice(0,10)<today);
-   $('z7FeeSummary').innerHTML=`Collected: <b>${esc(money(collected))}</b><div>Outstanding: <b>${esc(money(summary.outstanding))}</b></div><div>Overdue charges: <b>${overdue.length}</b></div>`;
+   const overdue=Number.isFinite(Number(summary.overdue_charges))?Number(summary.overdue_charges):charges.filter(charge=>number(charge.balance)>0&&charge.due_on&&String(charge.due_on).slice(0,10)<today).length;
+   $('z7FeeSummary').innerHTML=`Collected: <b>${esc(money(collected))}</b><div>Outstanding: <b>${esc(money(summary.outstanding))}</b></div><div>Overdue charges: <b>${overdue}</b></div>`;
    const months=new Map();
    for(const payment of (data.payments||[]).filter(item=>item.status==='CONFIRMED')){
     const key=String(payment.payment_date||'').slice(0,7);if(!/^\d{4}-\d{2}$/.test(key))continue;
@@ -469,7 +469,7 @@ function make(){
     request(`/api/operations/${sid}/overview${periodQuery}`),
     attendanceRequest,
     loadOptional(leadership&&roles!=='PLATFORM_OWNER'&&year&&term,`/api/communications/${sid}/analytics${periodQuery}`),
-    loadOptional(canFinance,`/api/finance/${sid}/overview`),
+    loadOptional(canFinance,`/api/finance/${sid}/dashboard-overview`),
     loadOptional(admin,`/api/people/${sid}/admission-applications`),
     loadOptional(leadership&&roles!=='PLATFORM_OWNER',`/api/extended/${sid}/hr_leave`),
     Promise.resolve(null),

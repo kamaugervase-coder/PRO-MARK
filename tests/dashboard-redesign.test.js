@@ -4,6 +4,8 @@ const path=require('node:path');
 const test=require('node:test');
 
 const dashboard=fs.readFileSync(path.join(__dirname,'../public/dashboard.html'),'utf8');
+const approvedDashboard=fs.readFileSync(path.join(__dirname,'../public/js/zelimu-approved-dashboard.js'),'utf8');
+const financeRoutes=fs.readFileSync(path.join(__dirname,'../backend/routes/finance.js'),'utf8');
 const portalStyles=fs.readFileSync(path.join(__dirname,'../public/css/zelimu-approved-dashboard.css'),'utf8');
 
 test('the approved portal stylesheet follows dashboard and module-specific styles',()=>{
@@ -32,6 +34,26 @@ test('opening Communication scrolls to the module and exposes manual SMS sending
 
 test('module workspaces are mounted outside the hidden legacy bridge',()=>{
   assert.match(dashboard,/const commandCentre=main\.querySelector\(':scope > \.zelimu-command-v1'\);[\s\S]*?commandCentre\.insertAdjacentElement\('afterend',display\)/);
+});
+
+test('opening modules jumps to the complete workspace without smooth-scroll delay',()=>{
+  assert.match(dashboard,/#zelimuWorkspaceDisplay>\.nav-managed-section\.nav-active\{display:block!important;max-height:none;min-height:calc\(100dvh - 120px\);overflow:visible/);
+  assert.match(dashboard,/display\.scrollIntoView\(\{behavior:'instant',block:'start'\}\)/);
+  assert.doesNotMatch(dashboard,/if\(n===28\)\{\s*requestAnimationFrame\(\(\)=>panel\?\.scrollIntoView\(\{behavior:'smooth'/);
+});
+
+test('command-centre finance uses a compact role-protected summary endpoint',()=>{
+  assert.match(financeRoutes,/router\.get\('\/:schoolId\/dashboard-overview',schoolBoundary,roles\(\.\.\.FINANCE_READ\)/);
+  assert.match(financeRoutes,/res\.json\(\{summary:summary\.rows\[0\],payments:payments\.rows\}\)/);
+  assert.match(approvedDashboard,/loadOptional\(canFinance,`\/api\/finance\/\$\{sid\}\/dashboard-overview`\)/);
+  assert.doesNotMatch(approvedDashboard,/loadOptional\(canFinance,`\/api\/finance\/\$\{sid\}\/overview`\)/);
+});
+
+test('CSV and school-export downloads keep object URLs alive after click',()=>{
+  assert.match(dashboard,/document\.body\.append\(link\);link\.click\(\);link\.remove\(\);setTimeout\(\(\)=>URL\.revokeObjectURL\(link\.href\),4000\)/);
+  assert.match(dashboard,/document\.body\.append\(a\);a\.click\(\);a\.remove\(\);setTimeout\(\(\)=>URL\.revokeObjectURL\(a\.href\),4000\)/);
+  assert.doesNotMatch(dashboard,/link\.click\(\);URL\.revokeObjectURL\(link\.href\)/);
+  assert.doesNotMatch(dashboard,/a\.click\(\);URL\.revokeObjectURL\(a\.href\)/);
 });
 
 test('the command centre uses crisp readable type and softened panel surfaces',()=>{

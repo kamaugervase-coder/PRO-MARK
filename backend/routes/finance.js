@@ -27,6 +27,43 @@ const validMoney=value=>
  Math.round(Number(value)*100)/100===Number(value);
 const validApplicability=value=>['ALL','DAY','BOARDING'].includes(String(value).toUpperCase());
 
+router.get('/:schoolId/dashboard-overview',schoolBoundary,roles(...FINANCE_READ),async(req,res)=>{
+ try{
+  const sid=req.params.schoolId;
+  const [summary,payments]=await Promise.all([
+   db.query(`SELECT COALESCE(charged.total,0) charged,COALESCE(received.total,0) collected,
+      COALESCE(received.collected_today,0) collected_today,COALESCE(received.collected_this_month,0) collected_this_month,
+      COALESCE(charged.total,0)-COALESCE(received.ledger_credits,0) net_balance,
+      GREATEST(COALESCE(charged.total,0)-COALESCE(received.ledger_credits,0),0) outstanding,
+      GREATEST(COALESCE(received.ledger_credits,0)-COALESCE(charged.total,0),0) prepaid_credit,
+      overdue.count overdue_charges
+    FROM (SELECT COALESCE((SELECT sum(amount) FROM school_fee_charges WHERE school_id=$1),0)
+        +COALESCE((SELECT sum(amount) FROM school_finance_adjustments WHERE school_id=$1 AND status='APPROVED' AND direction='DEBIT'),0) total) charged
+    CROSS JOIN (SELECT COALESCE(sum(p.amount),0) total,
+        COALESCE(sum(p.amount),0)
+        +COALESCE((SELECT sum(amount) FROM school_finance_adjustments WHERE school_id=$1 AND status='APPROVED' AND direction='CREDIT'),0) ledger_credits,
+        sum(p.amount) FILTER (WHERE p.payment_date=CURRENT_DATE) collected_today,
+        sum(p.amount) FILTER (WHERE date_trunc('month',p.payment_date)=date_trunc('month',CURRENT_DATE)) collected_this_month
+      FROM school_fee_payments p WHERE p.school_id=$1 AND p.status='CONFIRMED'
+        AND NOT EXISTS(SELECT 1 FROM school_fee_payment_reversals r WHERE r.school_id=p.school_id AND r.payment_id=p.id)) received
+    CROSS JOIN (SELECT count(*)::int count
+      FROM school_fee_charges ch
+      LEFT JOIN (
+        SELECT a.charge_id,sum(a.amount) allocated
+        FROM school_fee_payment_allocations a
+        JOIN school_fee_payments p ON p.id=a.payment_id AND p.status='CONFIRMED'
+          AND NOT EXISTS(SELECT 1 FROM school_fee_payment_reversals r WHERE r.school_id=p.school_id AND r.payment_id=p.id)
+        WHERE a.school_id=$1
+        GROUP BY a.charge_id
+      ) paid ON paid.charge_id=ch.id
+      WHERE ch.school_id=$1 AND ch.due_on<CURRENT_DATE AND ch.amount>COALESCE(paid.allocated,0)) overdue`,[sid]),
+   db.query(`SELECT amount,payment_date,status FROM school_fee_payments
+      WHERE school_id=$1 ORDER BY payment_date DESC,created_at DESC LIMIT 100`,[sid])
+  ]);
+  res.json({summary:summary.rows[0],payments:payments.rows});
+ }catch(e){console.error('School finance dashboard overview failed:',e);res.status(500).json({error:'Unable to load school finance summary.'});}
+});
+
 router.get('/:schoolId/overview',schoolBoundary,roles(...FINANCE_READ),async(req,res)=>{
  try{
   const sid=req.params.schoolId;

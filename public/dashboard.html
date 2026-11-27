@@ -82,7 +82,7 @@ header,.app-header,.topbar{box-shadow:0 8px 28px rgba(20,43,74,.09)}
 /* Workspace placement repair: all modules share one central display surface. */
 #zelimuWorkspaceDisplay{margin-left:calc(clamp(245px,23vw,315px) + 18px)!important;min-width:0;width:auto;min-height:calc(100dvh - 118px);position:relative;isolation:isolate}
 #zelimuWorkspaceDisplay>.nav-managed-section{margin:0!important;width:100%!important;max-width:100%!important;box-sizing:border-box;min-width:0}
-#zelimuWorkspaceDisplay>.nav-managed-section.nav-active{display:block!important;max-height:calc(100dvh - 120px);min-height:calc(100dvh - 120px);overflow-y:auto;overflow-x:auto;overscroll-behavior:contain}
+#zelimuWorkspaceDisplay>.nav-managed-section.nav-active{display:block!important;max-height:none;min-height:calc(100dvh - 120px);overflow:visible;overscroll-behavior:contain}
 #zelimuWorkspaceDisplay .grid,#zelimuWorkspaceDisplay .table-wrap{max-width:100%;min-width:0}
 #zelimuWorkspaceDisplay .table-wrap{overflow-x:auto}
 #markControl [hidden]{display:none!important}
@@ -1200,7 +1200,10 @@ function showSection(id){
     else el.removeAttribute('aria-current');
   });
   const display=$('zelimuWorkspaceDisplay');
-  if(display)display.scrollTop=0;
+  if(display){
+    display.scrollTop=0;
+    display.scrollIntoView({behavior:'instant',block:'start'});
+  }
   selected.scrollTop=0;
   const nav=$('navTabs');
   if(nav)nav.querySelectorAll('button[data-target]').forEach(b=>{
@@ -3150,7 +3153,6 @@ async function openPM24(n){
  if(n===26){ return renderQuickClassListWorkspace(); }
  if(n===27){ return renderTeacherControlWorkspace(); }
    if(n===28){
-     requestAnimationFrame(()=>panel?.scrollIntoView({behavior:'smooth',block:'start'}));
      return renderSchoolFinanceModule();
    }
  if(n===3){const b=document.createElement('button');b.className='btn secondary';b.type='button';b.textContent='OPEN TEACHER SUBJECTS & ASSIGNMENTS';b.onclick=()=>showSection('assign');$('pm24Detail')?.parentElement?.appendChild(b);}
@@ -3593,7 +3595,7 @@ async function renderTimetableWorkspace(){
    const quote=value=>`"${String(value??'').replace(/"/g,'""')}"`;
    const csv=[columns.map(x=>quote(x[1])).join(','),...rows.map(row=>columns.map(([key])=>quote(row[key])).join(','))].join('\\r\\n');
    const blob=new Blob(['\\ufeff'+csv],{type:'text/csv;charset=utf-8'}),link=document.createElement('a');
-   link.href=URL.createObjectURL(blob);link.download=`timetable-${yearSelect.value||'school'}-${termSelect.value||'all'}.csv`;link.click();URL.revokeObjectURL(link.href);
+   link.href=URL.createObjectURL(blob);link.download=`timetable-${yearSelect.value||'school'}-${termSelect.value||'all'}.csv`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(link.href),4000);
   };
   $('ttPrint').onclick=()=>{
    const popup=window.open('','_blank');if(!popup){$('ttRequirementStatus').textContent='Allow pop-ups to print the timetable.';return;}
@@ -3621,7 +3623,7 @@ async function renderTimetableWorkspace(){
   $('ttRetry').onclick=()=>renderTimetableWorkspace();
  }
 }
-async function renderExportModule(){const d=await api(`/api/operations/${sid}/export/summary`);$('pm24Data').innerHTML=`<div class="analytics-kpis"><div class="analytics-kpi"><span>Learners</span><strong>${d.learners.length}</strong></div><div class="analytics-kpi"><span>Teachers</span><strong>${d.teachers.length}</strong></div><div class="analytics-kpi"><span>Classes</span><strong>${d.classes.length}</strong></div><div class="analytics-kpi"><span>Subjects</span><strong>${d.subjects.length}</strong></div></div><div class="notice">This export is scoped to the selected school and contains the connected academic/people/assignment dataset.</div><button class="btn primary" id="downloadSchoolExport">DOWNLOAD SCHOOL EXPORT (JSON)</button>`;$('downloadSchoolExport').onclick=()=>{const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`ZELIMU-CBC-${String(d.school?.code||'SCHOOL').replace(/[^A-Z0-9_-]/gi,'-')}-EXPORT.json`;a.click();URL.revokeObjectURL(a.href);};}
+async function renderExportModule(){const d=await api(`/api/operations/${sid}/export/summary`);$('pm24Data').innerHTML=`<div class="analytics-kpis"><div class="analytics-kpi"><span>Learners</span><strong>${d.learners.length}</strong></div><div class="analytics-kpi"><span>Teachers</span><strong>${d.teachers.length}</strong></div><div class="analytics-kpi"><span>Classes</span><strong>${d.classes.length}</strong></div><div class="analytics-kpi"><span>Subjects</span><strong>${d.subjects.length}</strong></div></div><div class="notice">This export is scoped to the selected school and contains the connected academic/people/assignment dataset.</div><button class="btn primary" id="downloadSchoolExport">DOWNLOAD SCHOOL EXPORT (JSON)</button>`;$('downloadSchoolExport').onclick=()=>{const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`ZELIMU-CBC-${String(d.school?.code||'SCHOOL').replace(/[^A-Z0-9_-]/gi,'-')}-EXPORT.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);};}
 async function renderAuditModule(){const d=await api(`/api/operations/${sid}/audit`);$('pm24Data').innerHTML=`<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>${d.map(x=>`<tr><td>${esc(new Date(x.created_at).toLocaleString())}</td><td>${esc(x.email||'—')}</td><td>${esc(x.action)}</td><td>${esc(x.entity_type||'—')}</td><td>${esc(JSON.stringify(x.details||{}))}</td></tr>`).join('')||'<tr><td colspan="5">No audit events recorded.</td></tr>'}</tbody></table></div>`;}
 document.querySelectorAll('#navTabs button[data-target^="pm24_"]').forEach(b=>b.addEventListener('click',()=>openPM24(Number(b.dataset.target.split('_')[1]))));
 document.querySelectorAll('.pm-workflow-link[data-jump]').forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.jump;showSection(id);setTimeout(()=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'}),40);}));
